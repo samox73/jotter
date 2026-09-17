@@ -11,7 +11,7 @@
 Open, edit, and run real `.ipynb` notebooks in your terminal with vim keys, inline plots, and rendered LaTeX — with keystroke latency so low that holding a key is a non-event.
 
 <div align="center">
-<img src="assets/showcase.png" alt="jOtter showing markdown with rendered LaTeX, syntax-highlighted code cells, and an inline matplotlib plot" width="700"/>
+<img src="assets/showcase.png" alt="jOtter showing markdown with rendered LaTeX, syntax-highlighted code cells, and an inline matplotlib plot" width="490"/>
 </div>
 
 ## Features
