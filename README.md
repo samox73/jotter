@@ -59,7 +59,3 @@ Press `?` inside for the full key reference.
 ## Terminal support
 
 Best in [kitty](https://sw.kovidgoyal.net/kitty/) (graphics + keyboard protocol → `Shift+Enter`, distinct modifier keys). Any terminal works: graphics fall back to sixel/iTerm2/unicode halfblocks, and `r` runs cells where `Shift+Enter` can't be distinguished.
-
-## Status
-
-MVP complete — viewer, execution, editing, graphics, LaTeX. See [PLAN.md](PLAN.md) for architecture and the v2 roadmap.
