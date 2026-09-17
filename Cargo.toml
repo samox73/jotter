@@ -1,5 +1,6 @@
 [package]
-name = "jututui"
+name = "jotter"
+description = "jOtter — a fast Jupyter notebook TUI. The Jupyter otter. 🦦"
 version = "0.1.0"
 edition = "2024"
 

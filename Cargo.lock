@@ -1384,6 +1384,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "jotter"
+version = "0.1.0"
+dependencies = [
+ "ansi-to-tui",
+ "anyhow",
+ "base64 0.23.1",
+ "clap",
+ "crossterm",
+ "futures",
+ "image",
+ "jupyter-protocol",
+ "jupyter-zmq-client",
+ "libc",
+ "ratatui",
+ "ratatui-image",
+ "ratex-layout",
+ "ratex-parser",
+ "ratex-svg",
+ "ratex-types",
+ "resvg",
+ "serde",
+ "serde_json",
+ "syntect",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1427,34 +1455,6 @@ dependencies = [
  "tokio",
  "uuid",
  "zeromq",
-]
-
-[[package]]
-name = "jututui"
-version = "0.1.0"
-dependencies = [
- "ansi-to-tui",
- "anyhow",
- "base64 0.23.1",
- "clap",
- "crossterm",
- "futures",
- "image",
- "jupyter-protocol",
- "jupyter-zmq-client",
- "libc",
- "ratatui",
- "ratatui-image",
- "ratex-layout",
- "ratex-parser",
- "ratex-svg",
- "ratex-types",
- "resvg",
- "serde",
- "serde_json",
- "syntect",
- "tokio",
- "uuid",
 ]
 
 [[package]]

@@ -18,9 +18,9 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 use ui::Rendered;
 
-/// A fast Jupyter notebook TUI.
+/// jOtter — a fast Jupyter notebook TUI. The Jupyter otter. 🦦
 #[derive(Parser)]
-#[command(version)]
+#[command(name = "jotter", version)]
 struct Args {
     /// Path to the .ipynb file to open
     notebook: PathBuf,
@@ -131,7 +131,7 @@ fn external_edit(
 ) {
     let Some(cell) = app.notebook.cells.get(app.selected) else { return };
     let suffix = if cell.cell_type == "code" { "py" } else { "md" };
-    let tmp = std::env::temp_dir().join(format!("jututui-cell-{}.{suffix}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("jotter-cell-{}.{suffix}", std::process::id()));
     let editor_cmd = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
         .unwrap_or_else(|_| "vi".into());

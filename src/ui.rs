@@ -699,7 +699,7 @@ fn draw_help(frame: &mut Frame) {
     };
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(HELP).block(Block::bordered().title(" keys (any key closes) ")),
+        Paragraph::new(HELP).block(Block::bordered().title(" jOtter 🦦 — keys (any key closes) ")),
         area,
     );
 }

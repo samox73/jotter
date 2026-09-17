@@ -143,7 +143,7 @@ impl Kernel {
 
         let dir = jupyter_zmq_client::runtime_dir();
         tokio::fs::create_dir_all(&dir).await.ok();
-        let connection_file = dir.join(format!("jututui-{session}.json"));
+        let connection_file = dir.join(format!("jotter-{session}.json"));
         tokio::fs::write(&connection_file, serde_json::to_string(&info)?)
             .await
             .with_context(|| format!("writing {}", connection_file.display()))?;
