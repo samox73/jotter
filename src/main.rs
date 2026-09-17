@@ -1,4 +1,5 @@
 mod app;
+mod latex;
 mod editor;
 mod kernel;
 mod notebook;

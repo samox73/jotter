@@ -54,6 +54,8 @@ pub struct App {
     pub body: Rect,
     /// View was wheel-scrolled: draw must not snap back to the selection.
     pub manual_scroll: bool,
+    /// Keybinding cheatsheet overlay is open.
+    pub show_help: bool,
     last_click: Option<(Instant, u16, u16)>,
     confirm_quit: bool,
     /// First key of a two-key chord (dd).
@@ -109,6 +111,7 @@ impl App {
             hit: Vec::new(),
             body: Rect::default(),
             manual_scroll: false,
+            show_help: false,
             last_click: None,
             confirm_quit: false,
             pending: None,
@@ -166,23 +169,32 @@ impl App {
         }
         self.selected = cell;
         self.manual_scroll = true; // a click never scrolls the view
-        if let HitKind::Source(row) = kind {
-            let col = (x - body.x) as usize;
-            match &mut self.editor {
-                Some(editor) => editor.click(row, col, double),
-                None => {
-                    let Some(cell) = self.notebook.cells.get(self.selected) else { return };
-                    let mut editor = Editor::new(&cell.source);
-                    editor.click(row, col, double);
-                    self.editor = Some(editor);
+        match kind {
+            HitKind::Source(row) => {
+                let col = (x - body.x) as usize;
+                match &mut self.editor {
+                    Some(editor) => editor.click(row, col, double),
+                    None => {
+                        let Some(cell) = self.notebook.cells.get(self.selected) else { return };
+                        let mut editor = Editor::new(&cell.source);
+                        editor.click(row, col, double);
+                        self.editor = Some(editor);
+                    }
                 }
             }
+            // double click on rendered markdown / prompt / output: edit raw
+            HitKind::Other if double && self.editor.is_none() => self.open_editor(false),
+            HitKind::Other => {}
         }
     }
 
     pub fn on_key(&mut self, key: KeyEvent, rendered: &mut Rendered) -> Action {
         self.message = None;
         self.manual_scroll = false; // keyboard nav re-follows the selection
+        if self.show_help {
+            self.show_help = false;
+            return Action::None;
+        }
         if self.editor.is_some() {
             self.on_key_edit(key, rendered);
             return Action::None;
@@ -225,6 +237,7 @@ impl App {
         let last = self.notebook.cells.len().saturating_sub(1);
         match (pending, key.code) {
             (Some('d'), KeyCode::Char('d')) => self.delete_cell(rendered),
+            (Some('y'), KeyCode::Char('y')) => self.yank_to_clipboard(),
             (Some(_), _) => {}
             (None, code) => match code {
                 KeyCode::Char('q') => {
@@ -249,6 +262,7 @@ impl App {
                 KeyCode::Char('g') => self.selected = 0,
                 KeyCode::Char('G') => self.selected = last,
                 KeyCode::Char('d') => self.pending = Some('d'),
+                KeyCode::Char('y') => self.pending = Some('y'),
                 // edit
                 KeyCode::Enter if key.modifiers.is_empty() => self.open_editor(false),
                 KeyCode::Char('i') => self.open_editor(true),
@@ -293,6 +307,7 @@ impl App {
                     self.running.clear();
                     self.spawn_kernel();
                 }
+                KeyCode::Char('?') => self.show_help = true,
                 _ => {}
             },
         }
@@ -372,19 +387,48 @@ impl App {
         self.dirty = true;
     }
 
+    /// Cycle cell type: code -> markdown -> raw (rendered as latex) -> code.
     fn toggle_type(&mut self, rendered: &mut Rendered) {
         let Some(cell) = self.notebook.cells.get_mut(self.selected) else { return };
-        if cell.cell_type == "code" {
-            cell.cell_type = "markdown".into();
-            cell.outputs = None;
-            cell.extra.remove("execution_count");
-        } else {
-            cell.cell_type = "code".into();
-            cell.outputs = Some(Vec::new());
-            cell.extra.insert("execution_count".into(), Value::Null);
+        fn metadata(c: &mut Cell) -> &mut Map<String, Value> {
+            c.extra
+                .entry("metadata")
+                .or_insert_with(|| Value::Object(Map::new()))
+                .as_object_mut()
+                .expect("metadata is an object")
+        }
+        match cell.cell_type.as_str() {
+            "code" => {
+                cell.cell_type = "markdown".into();
+                cell.outputs = None;
+                cell.extra.remove("execution_count");
+            }
+            "markdown" => {
+                cell.cell_type = "raw".into();
+                metadata(cell).insert("format".into(), "text/latex".into());
+                self.message = Some("raw latex cell".into());
+            }
+            _ => {
+                cell.cell_type = "code".into();
+                metadata(cell).remove("format");
+                cell.outputs = Some(Vec::new());
+                cell.extra.insert("execution_count".into(), Value::Null);
+            }
         }
         rendered.rebuild_cell(self.selected, cell);
         self.dirty = true;
+    }
+
+    /// Copy the selected cell's source to the system clipboard via OSC 52.
+    fn yank_to_clipboard(&mut self) {
+        use base64::Engine;
+        use std::io::Write;
+        let Some(cell) = self.notebook.cells.get(self.selected) else { return };
+        let b64 = base64::engine::general_purpose::STANDARD.encode(cell.source.as_bytes());
+        let mut out = std::io::stdout();
+        let _ = write!(out, "\x1b]52;c;{b64}\x07");
+        let _ = out.flush();
+        self.message = Some("cell source copied to clipboard".into());
     }
 
     fn remap_running(&mut self, f: impl Fn(usize) -> Option<usize>) {
