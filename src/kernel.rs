@@ -111,7 +111,13 @@ impl Kernel {
         notebook_dir: &std::path::Path,
         tx: mpsc::UnboundedSender<Event>,
     ) -> Result<Kernel> {
-        let spec = resolve_kernelspec(name, notebook_dir).await?;
+        // Absolute notebook dir: venv-relative argv stays valid, and the kernel
+        // runs with cwd = notebook dir so relative paths in cells resolve like
+        // they do in jupyterlab.
+        let notebook_dir = notebook_dir
+            .canonicalize()
+            .unwrap_or_else(|_| notebook_dir.to_path_buf());
+        let spec = resolve_kernelspec(name, &notebook_dir).await?;
         let resolved_name = spec.kernel_name.clone();
         let spec_dir = spec.path.clone();
         let interrupt_via_message =
@@ -142,11 +148,11 @@ impl Kernel {
             .await
             .with_context(|| format!("writing {}", connection_file.display()))?;
 
-        let mut child = spec
+        let mut cmd = spec
             .command(&connection_file, Some(std::process::Stdio::piped()), None)
-            .map_err(|e| anyhow!("kernel argv: {e}"))?
-            .spawn()
-            .context("spawning kernel process")?;
+            .map_err(|e| anyhow!("kernel argv: {e}"))?;
+        cmd.current_dir(&notebook_dir);
+        let mut child = cmd.spawn().context("spawning kernel process")?;
         let pid = child.id();
 
         // Keep the last stderr line: it's the diagnosis when the kernel dies
