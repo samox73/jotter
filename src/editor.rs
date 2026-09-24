@@ -16,7 +16,9 @@ pub enum Outcome {
     /// Esc in normal mode: commit the buffer back to the cell.
     Exit,
     /// Shift+Enter / Ctrl+Enter: commit and run the cell (advance on `true`).
-    Run { advance: bool },
+    Run {
+        advance: bool,
+    },
 }
 
 pub struct Editor {
@@ -197,7 +199,9 @@ impl Editor {
                 KeyCode::Char('y') => self.pending = Some('y'),
                 KeyCode::Char('g') => self.pending = Some('g'),
                 KeyCode::Char('h') | KeyCode::Left => self.cursor.1 = col.saturating_sub(1),
-                KeyCode::Char('l') | KeyCode::Right => self.cursor.1 = (col + 1).min(self.max_col()),
+                KeyCode::Char('l') | KeyCode::Right => {
+                    self.cursor.1 = (col + 1).min(self.max_col())
+                }
                 KeyCode::Char('j') | KeyCode::Down => self.move_row(true),
                 KeyCode::Char('k') | KeyCode::Up => self.move_row(false),
                 KeyCode::Char('0') => self.cursor.1 = 0,

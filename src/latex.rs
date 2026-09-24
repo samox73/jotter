@@ -4,17 +4,36 @@
 //! relative to the terminal's font height.
 
 use image::RgbaImage;
-use ratex_layout::{layout, to_display_list, LayoutOptions};
+use ratex_layout::{LayoutOptions, layout, to_display_list};
 use ratex_parser::parser::parse;
-use ratex_svg::{render_to_svg, SvgOptions};
+use ratex_svg::{SvgOptions, render_to_svg};
 use ratex_types::{color::Color, math_style::MathStyle};
 use resvg::{tiny_skia, usvg};
 
 /// SVG font size the layout is produced at; one "text line" of math ≈ this many px.
 const SVG_FONT_PX: f64 = 40.0;
-/// Everforest-ish light foreground.
-const FG: Color = Color { r: 211.0 / 255.0, g: 198.0 / 255.0, b: 170.0 / 255.0, a: 1.0 };
 const MAX_ROWS: f32 = 8.0;
+
+/// Math foreground follows the configured syntax theme: light text for dark
+/// terminals (everforest-ish), dark text for light themes.
+fn fg() -> Color {
+    let theme = &crate::config::get().theme;
+    if theme.contains("light") || theme.contains("GitHub") {
+        Color {
+            r: 0.24,
+            g: 0.22,
+            b: 0.21,
+            a: 1.0,
+        }
+    } else {
+        Color {
+            r: 211.0 / 255.0,
+            g: 198.0 / 255.0,
+            b: 170.0 / 255.0,
+            a: 1.0,
+        }
+    }
+}
 
 /// Render display math scaled so one math text-line ≈ 1.4 terminal rows.
 /// Returns None on any parse/render failure — callers fall back to text.
@@ -42,6 +61,35 @@ pub fn render_inline(latex: &str, font_h: u16) -> Option<RgbaImage> {
         canvas.put_pixel(x, y + top, *p);
     }
     Some(canvas)
+}
+
+/// Render an SVG document at its intrinsic size (image/svg+xml outputs,
+/// markdown images). System fonts are loaded once for `<text>` elements
+/// (matplotlib defaults to paths, but not everyone does).
+pub fn render_svg(svg: &str) -> Option<RgbaImage> {
+    use std::sync::{Arc, OnceLock};
+    static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
+    let fontdb = FONTS.get_or_init(|| {
+        let mut db = usvg::fontdb::Database::new();
+        db.load_system_fonts();
+        Arc::new(db)
+    });
+    let opt = usvg::Options {
+        fontdb: fontdb.clone(),
+        ..Default::default()
+    };
+    let tree = usvg::Tree::from_str(svg, &opt).ok()?;
+    let (w, h) = (
+        tree.size().width().ceil().max(1.0) as u32,
+        tree.size().height().ceil().max(1.0) as u32,
+    );
+    let mut pixmap = tiny_skia::Pixmap::new(w, h)?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::identity(),
+        &mut pixmap.as_mut(),
+    );
+    RgbaImage::from_raw(w, h, pixmap.data().to_vec())
 }
 
 /// Crop to the bounding box of non-transparent pixels (None if fully empty).
@@ -74,7 +122,7 @@ fn render_scaled(
         return None;
     }
     let ast = parse(latex).ok()?;
-    let layout_opts = LayoutOptions::default().with_style(style).with_color(FG);
+    let layout_opts = LayoutOptions::default().with_style(style).with_color(fg());
     let display_list = to_display_list(&layout(&ast, &layout_opts));
     let svg = render_to_svg(
         &display_list,
@@ -190,7 +238,10 @@ mod tests {
             assert_eq!(img.height(), 16, "height of {tex}");
             // cropped: first and last pixel-columns contain visible content
             let w = img.width();
-            assert!((0..img.height()).any(|y| img.get_pixel(0, y).0[3] > 0), "left edge {tex}");
+            assert!(
+                (0..img.height()).any(|y| img.get_pixel(0, y).0[3] > 0),
+                "left edge {tex}"
+            );
             assert!(
                 (0..img.height()).any(|y| img.get_pixel(w - 1, y).0[3] > 0),
                 "right edge {tex}"

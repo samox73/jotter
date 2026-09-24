@@ -25,11 +25,16 @@ Open, edit, and run real `.ipynb` notebooks in your terminal with vim keys, inli
 - **LaTeX**: `$$display$$` and `$inline$` math render as real equations (via [ratex](https://crates.io/crates/ratex-svg)); raw cells with `metadata.format: text/latex` render entirely as math. No TeX installation needed.
 - **Markdown cells** render rich (headings, bullets, fenced code with syntax highlighting, math) when not being edited.
 - **Mouse**: click to select or place the cursor, double-click to insert, wheel to scroll. `Shift+drag` for native text selection, `yy` copies a cell to the system clipboard (OSC 52).
+- **Jupyter stream semantics**: consecutive stream chunks coalesce, `\r` progress bars (tqdm) overwrite in place, `clear_output` works, and per-cell output is capped at the last 10k lines.
+- **Long outputs** display as a scrollable viewport pinned to the live tail — wheel over it or `[`/`]` to scroll, `o` to collapse.
+- **Data safety**: atomic fsync'd saves, autosave sidecar for crash recovery, save/discard/cancel prompt on quit, and a warning instead of a silent overwrite when the file changed on disk.
+- **input() support**, run-all/above/below with a queued/running gutter, `/` search across cells, cell-op undo, per-cell execution timing, message history (`M`).
 
 ## Install
 
 ```sh
-cargo install --path .
+cargo install --path .   # or: make install
+nix run github:samox/jotter -- notebook.ipynb   # or build via the bundled flake
 ```
 
 Rust 1.85+ (edition 2024). No native dependencies — the ZMQ stack is pure Rust.
@@ -40,21 +45,43 @@ Rust 1.85+ (edition 2024). No native dependencies — the ZMQ stack is pure Rust
 jotter notebook.ipynb              # kernel from notebook metadata
 jotter --kernel phy notebook.ipynb # explicit kernelspec
 jotter --no-images notebook.ipynb  # text-only outputs
+jotter --log jotter.log nb.ipynb   # debug log (jotter + kernel wire)
 ```
 
 Press `?` inside for the full key reference.
 
 |  |  |
 | --- | --- |
-| `j/k` `g/G` | select / first / last cell |
+| `j/k` `g/G` `5G` | select / first / last / numbered cell |
 | `Enter` `i` `A` | edit cell (vi bindings inside, `Esc` exits) |
 | `Shift+Enter` / `Ctrl+Enter` / `r` | run cell (+advance / in place / +advance) |
-| `a`/`b` `dd`/`p` `J`/`K` | insert, delete/paste, move cells |
+| `Ctrl+r` `<` `>` | run all / all above / cell and below |
+| `a`/`b` `dd`/`p` `J`/`K` `u` | insert, delete/paste, move cells, undo |
+| `/` `n` `N` | search cell sources / next / previous |
+| `o` `[` `]` | collapse / scroll long outputs (or wheel over them) |
+| `z` / `Z` | zoom image fullscreen / toggle native-size images |
 | `m` | cycle cell type: code → markdown → latex |
 | `yy` | copy cell source to clipboard |
 | `E` | edit cell in `$EDITOR` |
-| `w` / `q` | save / quit |
-| `Ctrl+C` / `R` | interrupt / restart kernel |
+| `w` (`W` force) / `q` | save / quit |
+| `Ctrl+C` / `R` / `M` | interrupt / restart kernel / message history |
+
+## Config
+
+Optional, at `~/.config/jotter/config.toml` — every key has a default:
+
+```toml
+max_image_rows = 18     # images taller than this are downscaled once (Lanczos)
+max_output_rows = 15    # output rows shown before the viewport scrolls
+autosave_secs = 30      # autosave sidecar interval
+theme = "base16-ocean.dark"  # try base16-ocean.light on light terminals
+```
+
+## Known limits
+
+- Images wider than the terminal crop at the right edge instead of scaling (keeps the one-time high-quality downscale; no render-time rescaling, no aliasing).
+- Terminal resize resets output-viewport positions; a font-size change (terminal zoom) re-transmits all images.
+- Non-goals: ipywidgets (placeholder only), multiple tabs, remote/existing kernels, Windows.
 
 ## Terminal support
 

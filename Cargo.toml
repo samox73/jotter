@@ -15,6 +15,7 @@ image = "0.25.10"
 jupyter-protocol = "2.0.2"
 jupyter-zmq-client = { version = "1.0.1", features = ["tokio-runtime"] }
 libc = "0.2.189"
+log = "0.4"
 ratatui = "0.30.2"
 ratatui-image = { version = "11.1.0", default-features = false, features = ["image-defaults", "crossterm"] }
 ratex-layout = "0.1.11"
@@ -26,4 +27,5 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 syntect = "5.3.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "process"] }
+toml = "0.9"
 uuid = { version = "1.26.1", features = ["v4"] }

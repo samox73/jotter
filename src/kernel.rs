@@ -1,9 +1,10 @@
 //! Kernel lifecycle + wire protocol. The UI owns a `Kernel` handle and an
 //! `mpsc::Receiver<Event>`; three small tokio tasks pump the sockets.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use jupyter_protocol::messaging::{
-    ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
+    ExecuteRequest, ExecutionState, InputReply, InterruptRequest, JupyterMessage,
+    JupyterMessageContent,
 };
 use jupyter_protocol::{ConnectionInfo, Transport};
 use serde::Serialize;
@@ -19,6 +20,14 @@ pub enum Event {
     Output { parent: String, output: Value },
     /// `execute_input` arrived: the kernel assigned an execution count.
     ExecutionCount { parent: String, count: i64 },
+    /// clear_output arrived; with `wait` the clear is deferred to next output.
+    Clear { parent: String, wait: bool },
+    /// The kernel asked for user input (`input()`); reply via `Kernel::reply_input`.
+    Input {
+        request: Box<JupyterMessage>,
+        prompt: String,
+        password: bool,
+    },
     /// iopub status: kernel busy/idle.
     Busy(bool),
     /// execute_reply arrived: this execution is finished.
@@ -37,6 +46,7 @@ pub struct Kernel {
     session: String,
     shell_tx: mpsc::UnboundedSender<JupyterMessage>,
     control_tx: mpsc::UnboundedSender<JupyterMessage>,
+    stdin_tx: mpsc::UnboundedSender<JupyterMessage>,
     pid: Option<u32>,
     /// Tells the monitor task to kill the child (fired on Drop).
     kill_tx: Option<tokio::sync::oneshot::Sender<()>>,
@@ -76,10 +86,12 @@ async fn resolve_kernelspec(
                 // ipykernel ships argv[0] = "python" (relative); jupyter clients
                 // substitute their own interpreter. Ours is the venv's python.
                 if let Some(arg0) = spec.kernelspec.argv.first_mut()
-                    && !arg0.contains('/') && arg0.starts_with("python")
-                        && let Some(venv) = dir.parent().and_then(|p| p.parent()) {
-                            *arg0 = venv.join("bin/python").to_string_lossy().into_owned();
-                        }
+                    && !arg0.contains('/')
+                    && arg0.starts_with("python")
+                    && let Some(venv) = dir.parent().and_then(|p| p.parent())
+                {
+                    *arg0 = venv.join("bin/python").to_string_lossy().into_owned();
+                }
                 return Ok(spec);
             }
         }
@@ -120,8 +132,12 @@ impl Kernel {
         let spec = resolve_kernelspec(name, &notebook_dir).await?;
         let resolved_name = spec.kernel_name.clone();
         let spec_dir = spec.path.clone();
-        let interrupt_via_message =
-            spec.kernelspec.interrupt_mode.as_deref() == Some("message");
+        log::info!(
+            "kernelspec '{resolved_name}' from {}, argv {:?}",
+            spec_dir.display(),
+            spec.kernelspec.argv
+        );
+        let interrupt_via_message = spec.kernelspec.interrupt_mode.as_deref() == Some("message");
 
         let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
         let ports = jupyter_zmq_client::peek_ports(ip, 5)
@@ -154,6 +170,10 @@ impl Kernel {
         cmd.current_dir(&notebook_dir);
         let mut child = cmd.spawn().context("spawning kernel process")?;
         let pid = child.id();
+        log::info!(
+            "kernel spawned, pid {pid:?}, connection file {}",
+            connection_file.display()
+        );
 
         // Keep the last stderr line: it's the diagnosis when the kernel dies
         // (and the pipe must be drained anyway or the kernel could block).
@@ -183,6 +203,7 @@ impl Kernel {
                 Some(status) => {
                     let code = status.map_or_else(|e| e.to_string(), |s| s.to_string());
                     let stderr = last_stderr.lock().unwrap().clone();
+                    log::warn!("kernel died ({code}): {stderr}");
                     let _ = monitor_tx.send(Event::Dead(format!("kernel died ({code}): {stderr}")));
                 }
                 None => {
@@ -195,13 +216,21 @@ impl Kernel {
         let mut iopub = jupyter_zmq_client::create_client_iopub_connection(&info, "", &session)
             .await
             .map_err(|e| anyhow!("iopub connect: {e}"))?;
-        let identity = jupyter_zmq_client::peer_identity_for_session(&session)
-            .map_err(|e| anyhow!("{e}"))?;
+        let identity =
+            jupyter_zmq_client::peer_identity_for_session(&session).map_err(|e| anyhow!("{e}"))?;
         let shell = jupyter_zmq_client::create_client_shell_connection_with_identity(
-            &info, &session, identity,
+            &info,
+            &session,
+            identity.clone(),
         )
         .await
         .map_err(|e| anyhow!("shell connect: {e}"))?;
+        // stdin must share the shell's identity so input_request routes to us
+        let stdin = jupyter_zmq_client::create_client_stdin_connection_with_identity(
+            &info, &session, identity,
+        )
+        .await
+        .map_err(|e| anyhow!("stdin connect: {e}"))?;
         let control = jupyter_zmq_client::create_client_control_connection(&info, &session)
             .await
             .map_err(|e| anyhow!("control connect: {e}"))?;
@@ -213,11 +242,13 @@ impl Kernel {
                 match iopub.read().await {
                     Ok(msg) => {
                         if let Some(ev) = translate_iopub(msg)
-                            && iopub_tx.send(ev).is_err() {
-                                break; // UI gone
-                            }
+                            && iopub_tx.send(ev).is_err()
+                        {
+                            break; // UI gone
+                        }
                     }
                     Err(e) => {
+                        log::warn!("iopub read failed: {e}");
                         let _ = iopub_tx.send(Event::Info(format!("kernel connection lost: {e}")));
                         break;
                     }
@@ -247,6 +278,37 @@ impl Kernel {
             }
         });
 
+        // stdin: input_request -> UI event; input_reply queued back from the UI
+        let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<JupyterMessage>();
+        let (mut stdin_send, mut stdin_recv) = stdin.split();
+        let input_tx = tx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    msg = stdin_recv.read() => {
+                        let Ok(msg) = msg else { break };
+                        if let JupyterMessageContent::InputRequest(x) = &msg.content {
+                            let (prompt, password) = (x.prompt.clone(), x.password);
+                            if input_tx
+                                .send(Event::Input { request: Box::new(msg), prompt, password })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    reply = stdin_rx.recv() => match reply {
+                        Some(msg) => {
+                            if stdin_send.send(msg).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break,
+                    },
+                }
+            }
+        });
+
         // control: sender task (replies are not interesting yet; the recv half
         // must stay alive or the socket closes, so the task holds both)
         let (control_tx, mut control_rx) = mpsc::unbounded_channel::<JupyterMessage>();
@@ -266,6 +328,7 @@ impl Kernel {
             session,
             shell_tx,
             control_tx,
+            stdin_tx,
             pid,
             kill_tx: Some(kill_tx),
             interrupt_via_message,
@@ -281,7 +344,7 @@ impl Kernel {
                 silent: false,
                 store_history: true,
                 user_expressions: None,
-                allow_stdin: false,
+                allow_stdin: true,
                 stop_on_error: true,
             },
             None,
@@ -290,6 +353,19 @@ impl Kernel {
         let id = msg.header.msg_id.clone();
         let _ = self.shell_tx.send(msg);
         id
+    }
+
+    /// Answer an `input_request` (must be a child of the request message).
+    pub fn reply_input(&self, request: &JupyterMessage, value: String) {
+        let reply = JupyterMessage::new(
+            InputReply {
+                value,
+                ..Default::default()
+            },
+            Some(request),
+        )
+        .with_session(&self.session);
+        let _ = self.stdin_tx.send(reply);
     }
 
     pub fn interrupt(&self) {
@@ -327,6 +403,10 @@ fn translate_iopub(msg: JupyterMessage) -> Option<Event> {
         C::ExecuteResult(x) => nb_output(parent, "execute_result", x),
         C::DisplayData(x) => nb_output(parent, "display_data", x),
         C::ErrorOutput(x) => nb_output(parent, "error", x),
+        C::ClearOutput(x) => Some(Event::Clear {
+            parent,
+            wait: x.wait,
+        }),
         C::ExecuteInput(x) => {
             let count = serde_json::to_value(x.execution_count).ok()?.as_i64()?;
             Some(Event::ExecutionCount { parent, count })
@@ -344,4 +424,48 @@ fn nb_output<T: Serialize>(parent: String, ty: &str, x: T) -> Option<Event> {
     let mut output = serde_json::to_value(x).ok()?;
     output["output_type"] = ty.into();
     Some(Event::Output { parent, output })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// End-to-end against a real python kernel. Ignored by default because it
+    /// needs ipykernel installed; run with `cargo test -- --ignored`.
+    #[tokio::test]
+    #[ignore = "spawns a real python kernel (needs ipykernel)"]
+    async fn execute_roundtrip_on_real_kernel() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        Kernel::launch("python3".into(), std::env::temp_dir(), tx).await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        async fn next(
+            rx: &mut mpsc::UnboundedReceiver<Event>,
+            deadline: tokio::time::Instant,
+        ) -> Event {
+            tokio::time::timeout_at(deadline, rx.recv())
+                .await
+                .expect("timed out waiting for kernel event")
+                .expect("event channel closed")
+        }
+        let kernel = loop {
+            match next(&mut rx, deadline).await {
+                Event::Ready(k) => break *k,
+                Event::Info(msg) => panic!("launch failed: {msg}"),
+                _ => {}
+            }
+        };
+        let msg_id = kernel.execute("print(21 * 2)".into());
+        let mut out = String::new();
+        loop {
+            match next(&mut rx, deadline).await {
+                Event::Output { parent, output } if parent == msg_id => {
+                    out.push_str(&crate::notebook::join_multiline(&output["text"]));
+                }
+                Event::Done { parent } if parent == msg_id => break,
+                Event::Dead(reason) => panic!("kernel died: {reason}"),
+                _ => {}
+            }
+        }
+        assert!(out.contains("42"), "expected 42 in stdout, got: {out:?}");
+    }
 }

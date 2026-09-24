@@ -26,25 +26,104 @@ pub struct Cell {
     pub extra: Map<String, Value>,
 }
 
+/// Lines kept per stream output; older ones are dropped (runaway print loops).
+const MAX_STREAM_LINES: usize = 10_000;
+
 impl Cell {
     pub fn execution_count(&self) -> Option<i64> {
         self.extra.get("execution_count").and_then(Value::as_i64)
+    }
+
+    /// Append a kernel output with nbformat stream semantics: consecutive
+    /// same-name streams coalesce into one output (what jupyter frontends
+    /// save), carriage returns overwrite the current line (tqdm), and the
+    /// text is capped to its last MAX_STREAM_LINES lines.
+    pub fn push_output(&mut self, output: Value) {
+        let outputs = self.outputs.get_or_insert_with(Vec::new);
+        let stream_name = |o: &Value| -> Option<String> {
+            (o["output_type"] == "stream").then(|| o["name"].as_str().unwrap_or("").to_string())
+        };
+        let Some(name) = stream_name(&output) else {
+            outputs.push(output);
+            return;
+        };
+        let chunk = join_multiline(&output["text"]);
+        match outputs.last_mut() {
+            Some(last) if stream_name(last).as_deref() == Some(&name) => {
+                let merged = collapse_cr(join_multiline(&last["text"]) + &chunk);
+                last["text"] = cap_lines(merged, MAX_STREAM_LINES).into();
+            }
+            _ => {
+                let mut output = output;
+                output["text"] = cap_lines(collapse_cr(chunk), MAX_STREAM_LINES).into();
+                outputs.push(output);
+            }
+        }
+    }
+}
+
+/// `\r\n` is a newline; a bare `\r` returns to line start and later text
+/// overwrites from there — terminal semantics, so `print(x, end="\r")` frames
+/// stay visible and progress spam never accumulates in memory or saved JSON.
+fn collapse_cr(s: String) -> String {
+    if !s.contains('\r') {
+        return s;
+    }
+    s.replace("\r\n", "\n")
+        .split('\n')
+        .map(|line| {
+            let mut acc = String::new();
+            for part in line.split('\r').filter(|p| !p.is_empty()) {
+                let tail: String = acc.chars().skip(part.chars().count()).collect();
+                acc = format!("{part}{tail}");
+            }
+            // a trailing \r is a *pending* overwrite: keep the marker so the
+            // next merged chunk overwrites this line (renderers strip it)
+            if line.ends_with('\r') {
+                acc.push('\r');
+            }
+            acc
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Keep only the last `max` lines, with a truncation marker up top.
+fn cap_lines(s: String, max: usize) -> String {
+    if s.len() < max {
+        return s; // cannot have more lines than bytes
+    }
+    let extra = s.split('\n').count().saturating_sub(max);
+    if extra == 0 {
+        return s;
+    }
+    match s.match_indices('\n').nth(extra - 1) {
+        Some((cut, _)) => format!("[... output truncated ...]\n{}", &s[cut + 1..]),
+        None => s,
     }
 }
 
 impl Notebook {
     pub fn open(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
     }
 
-    /// Atomic save: write sibling temp file, then rename over the original.
+    /// Atomic save: write sibling temp file, fsync, then rename over the
+    /// original — a crash mid-save never leaves a corrupt notebook.
     pub fn save(&self, path: &Path) -> Result<()> {
+        use std::io::Write;
         let mut json = serde_json::to_string_pretty(self)?;
         json.push('\n');
         let tmp = path.with_extension("ipynb.tmp");
-        std::fs::write(&tmp, &json).with_context(|| format!("writing {}", tmp.display()))?;
+        let mut f =
+            std::fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+        f.write_all(json.as_bytes())
+            .with_context(|| format!("writing {}", tmp.display()))?;
+        f.sync_all()
+            .with_context(|| format!("syncing {}", tmp.display()))?;
+        drop(f);
         std::fs::rename(&tmp, path).with_context(|| format!("renaming onto {}", path.display()))?;
         Ok(())
     }
@@ -136,6 +215,39 @@ mod tests {
         assert_eq!(nb.cells[1].execution_count(), Some(2));
         assert_eq!(nb.cells[2].execution_count(), None); // null in the JSON
         assert_eq!(nb.cells[2].source, "");
+    }
+
+    #[test]
+    fn stream_outputs_coalesce_with_cr_semantics() {
+        let mut cell: Cell =
+            serde_json::from_str(r#"{"cell_type": "code", "metadata": {}, "source": ""}"#).unwrap();
+        let stream = |name: &str, text: &str| serde_json::json!({"output_type": "stream", "name": name, "text": text});
+        cell.push_output(stream("stdout", "10%\r"));
+        cell.push_output(stream("stdout", "50%\r"));
+        cell.push_output(stream("stdout", "100%\ndone\n"));
+        cell.push_output(stream("stderr", "warn\n")); // different stream: own output
+        cell.push_output(serde_json::json!({"output_type": "execute_result", "data": {}}));
+        cell.push_output(stream("stdout", "after\n")); // not adjacent: not merged
+        let outs = cell.outputs.as_ref().unwrap();
+        assert_eq!(outs.len(), 4);
+        assert_eq!(outs[0]["text"], "100%\ndone\n"); // \r frames overwritten
+        assert_eq!(outs[1]["text"], "warn\n");
+        assert_eq!(outs[3]["text"], "after\n");
+    }
+
+    #[test]
+    fn stream_text_is_capped() {
+        let long: String = "x\n".repeat(MAX_STREAM_LINES + 5);
+        let capped = cap_lines(long, MAX_STREAM_LINES);
+        assert!(capped.starts_with("[... output truncated ...]\n"));
+        assert_eq!(capped.split('\n').count(), MAX_STREAM_LINES + 1);
+        // crlf is a newline, not an overwrite
+        assert_eq!(collapse_cr("a\r\nb".into()), "a\nb");
+        // a trailing \r stays visible, with the pending-overwrite marker kept
+        // so the next merged chunk replaces it (print(x, end="\\r") idiom)
+        assert_eq!(collapse_cr("42%\r".into()), "42%\r");
+        // overwrite is positional: a shorter frame leaves the tail behind
+        assert_eq!(collapse_cr("12345\rab".into()), "ab345");
     }
 
     #[test]
