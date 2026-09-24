@@ -14,8 +14,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use ratatui_image::picker::Picker;
-use ratatui_image::protocol::StatefulProtocol;
-use ratatui_image::StatefulImage;
+use ratatui_image::sliced::{SignedPosition, SlicedImage, SlicedProtocol};
 use serde_json::Value;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Theme, ThemeSet};
@@ -33,7 +32,7 @@ pub struct InlineImage {
     col: u16,
     cols: u16,
     rows: u16,
-    proto: StatefulProtocol,
+    proto: SlicedProtocol,
 }
 
 pub struct CellBlock {
@@ -161,16 +160,29 @@ impl Rendered {
     }
 
     /// Wrap a decoded image into a protocol + terminal-cell dimensions.
+    /// Anything taller than MAX_IMAGE_ROWS is downscaled once, here, with a
+    /// real filter; render-time then never rescales (its default filter is
+    /// nearest-neighbor, which aliases plot lines badly). SlicedProtocol
+    /// transmits once and clips per-row when partially scrolled off.
     fn image_entry(&self, img: image::DynamicImage) -> Option<InlineImage> {
         let picker = self.picker.as_ref()?;
-        let font = picker.font_size();
-        let (fw, fh) = (font.width, font.height);
-        let rows = ((img.height() as f32 / fh as f32).ceil() as u16).min(MAX_IMAGE_ROWS);
-        // width that preserves aspect at the (possibly capped) height
-        let scale = rows as f32 * fh as f32 / img.height() as f32;
-        let cols = ((img.width() as f32 * scale / fw as f32).ceil() as u16).max(1);
-        let proto = picker.new_resize_protocol(img);
-        Some(InlineImage { line: 0, col: 0, cols, rows, proto })
+        let fh = picker.font_size().height as u32;
+        let max_h = MAX_IMAGE_ROWS as u32 * fh;
+        let img = if img.height() > max_h {
+            let w = (img.width() as u64 * max_h as u64 / img.height() as u64).max(1) as u32;
+            img.resize_exact(w, max_h, image::imageops::FilterType::Lanczos3)
+        } else {
+            img
+        };
+        let proto = SlicedProtocol::new(picker, img, None).ok()?;
+        let size = proto.size();
+        Some(InlineImage {
+            line: 0,
+            col: 0,
+            cols: size.width.max(1),
+            rows: size.height.max(1),
+            proto,
+        })
     }
 
     /// If the output carries a PNG and graphics are available, build a protocol.
@@ -482,6 +494,21 @@ mod tests {
     }
 
     #[test]
+    fn tall_images_prescale_to_row_cap_preserving_aspect() {
+        let nb = Notebook { cells: vec![], extra: serde_json::Map::new() };
+        let picker = Picker::from_fontsize(FontSize::new(8, 16));
+        let r = Rendered::build(&nb, Some(picker));
+        // 640x480 > 18*16=288 px tall -> prescaled to exactly the cap
+        let entry = r.image_entry(image::DynamicImage::new_rgba8(640, 480)).unwrap();
+        assert_eq!(entry.rows, MAX_IMAGE_ROWS);
+        assert_eq!(entry.cols, 48); // 640 * 288/480 = 384 px / 8 px per col
+
+        // small image: untouched, ceil to cells
+        let entry = r.image_entry(image::DynamicImage::new_rgba8(100, 100)).unwrap();
+        assert_eq!((entry.cols, entry.rows), (13, 7));
+    }
+
+    #[test]
     fn all_inline_math_becomes_images() {
         let cell: Cell = serde_json::from_value(serde_json::json!({
             "cell_type": "markdown",
@@ -595,7 +622,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     frame.render_widget(Paragraph::new(Text::from(lines)).scroll((scroll, 0)), body);
 
     // Image pass: render graphics into their reserved blank lines.
-    for (i, block) in rendered.blocks.iter_mut().enumerate() {
+    for (i, block) in rendered.blocks.iter().enumerate() {
         let editing = app.editor.is_some() && i == app.selected;
         // editing replaces the source region: output images shift, source-region
         // images (markdown math) hide behind the raw text.
@@ -603,27 +630,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
             (Some(ed), true) => ed.lines.len() as isize - block.src_lines as isize,
             _ => 0,
         };
-        for img in &mut block.images {
+        for img in &block.images {
             let in_src = img.line < block.src_lines;
             if in_src && editing {
                 continue;
             }
             let abs = starts[i] as isize + 1 + img.line as isize + if in_src { 0 } else { delta };
-            if abs < app.scroll as isize {
-                continue; // ponytail: images pop in only once their top line is visible
-            }
-            let abs = abs as usize;
-            let rel = (abs - app.scroll) as u16;
-            if rel >= body.height || img.col >= body.width {
+            let rel = abs - app.scroll as isize;
+            if rel + img.rows as isize <= 0 || rel >= body.height as isize || img.col >= body.width
+            {
                 continue;
             }
-            let area = Rect {
-                x: body.x + img.col,
-                y: body.y + rel,
-                width: img.cols.min(body.width - img.col),
-                height: img.rows.min(body.height - rel),
-            };
-            frame.render_stateful_widget(StatefulImage::new(), area, &mut img.proto);
+            // SlicedImage clips rows above/below the viewport itself: the image
+            // was transmitted once, only row-offset placeholders move on scroll.
+            let pos = SignedPosition { x: img.col as i16, y: rel as i16 };
+            frame.render_widget(SlicedImage::new(&img.proto, pos), body);
         }
     }
 
