@@ -168,8 +168,11 @@ impl Notebook {
         let mut value = serde_json::to_value(self)?;
         // `transient` (display_id routing) lives on outputs in memory only;
         // nbformat's output schemas reject it
+        // (get_mut, not `cell["outputs"]`: IndexMut would *insert* a null
+        // `outputs` into markdown/raw cells, which nbformat rejects)
         for cell in value["cells"].as_array_mut().into_iter().flatten() {
-            for output in cell["outputs"].as_array_mut().into_iter().flatten() {
+            let outputs = cell.get_mut("outputs").and_then(Value::as_array_mut);
+            for output in outputs.into_iter().flatten() {
                 if let Some(o) = output.as_object_mut() {
                     o.remove("transient");
                 }
@@ -325,7 +328,7 @@ mod tests {
     #[test]
     fn save_is_byte_identical_to_nbformat_write() {
         // json.dumps(nb, sort_keys=True, indent=1, ensure_ascii=False) + "\n"
-        let canonical = "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"a1\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"x = 1\\n\",\n    \"é\"\n   ]\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}\n";
+        let canonical = "{\n \"cells\": [\n  {\n   \"cell_type\": \"markdown\",\n   \"id\": \"m1\",\n   \"metadata\": {},\n   \"source\": [\n    \"# hi\"\n   ]\n  },\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"a1\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"x = 1\\n\",\n    \"é\"\n   ]\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}\n";
         let path = std::env::temp_dir().join(format!("jotter-fmt-{}.ipynb", std::process::id()));
         std::fs::write(&path, canonical).unwrap();
         Notebook::open(&path).unwrap().save(&path).unwrap();
