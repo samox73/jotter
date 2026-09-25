@@ -1404,7 +1404,7 @@ const HELP: &str = "\
  Enter, i, A  edit cell (vi: hjkl wbe 0$^ ggG x dd yy p u ...)
  Esc          exit editing (normal mode)
  E            edit cell in $EDITOR
- Shift+Enter  run + advance    Ctrl+Enter/r  run
+ Shift+Enter/r  run + advance  Ctrl+Enter  run
  Ctrl+r       run all          < / >  run all above / cell+below
  a/b          new cell after / before
  dd / p       delete cell / paste it        u  undo cell op

@@ -107,14 +107,44 @@ impl Notebook {
     pub fn open(path: &Path) -> Result<Self> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+        let mut nb: Self =
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        nb.upgrade_to_4_5();
+        Ok(nb)
+    }
+
+    /// nbformat 4.5 made cell ids mandatory (nbformat 5.1, Jan 2021). Like
+    /// `nbformat.v4.upgrade`, give id-less cells a random id and bump the
+    /// minor version, so every cell has a stable identity (nvim buffers key
+    /// on it) and cells we add are valid. Only reaches disk on save.
+    fn upgrade_to_4_5(&mut self) {
+        if self.extra.get("nbformat").and_then(Value::as_i64) != Some(4) {
+            return;
+        }
+        if self.extra.get("nbformat_minor").and_then(Value::as_i64) < Some(5) {
+            self.extra.insert("nbformat_minor".into(), 5.into());
+        }
+        for cell in &mut self.cells {
+            cell.extra
+                .entry("id")
+                .or_insert_with(|| new_cell_id().into());
+        }
     }
 
     /// Atomic save: write sibling temp file, fsync, then rename over the
     /// original — a crash mid-save never leaves a corrupt notebook.
     pub fn save(&self, path: &Path) -> Result<()> {
         use std::io::Write;
-        let mut json = serde_json::to_string_pretty(self)?;
+        // byte-identical to nbformat.write: sorted keys (serde_json::Map is a
+        // BTreeMap; going through Value also sorts the typed Cell fields),
+        // 1-space indent, trailing newline — no diff noise in git
+        let mut buf = Vec::new();
+        let fmt = serde_json::ser::PrettyFormatter::with_indent(b" ");
+        serde::Serialize::serialize(
+            &serde_json::to_value(self)?,
+            &mut serde_json::Serializer::with_formatter(&mut buf, fmt),
+        )?;
+        let mut json = String::from_utf8(buf)?;
         json.push('\n');
         let tmp = path.with_extension("ipynb.tmp");
         let mut f =
@@ -127,6 +157,11 @@ impl Notebook {
         std::fs::rename(&tmp, path).with_context(|| format!("renaming onto {}", path.display()))?;
         Ok(())
     }
+}
+
+/// nbformat cell id: 8 hex chars (schema: 1-64 of [a-zA-Z0-9-_]).
+pub fn new_cell_id() -> String {
+    uuid::Uuid::new_v4().to_string()[..8].to_string()
 }
 
 /// nbformat "multiline string": a string or a list of lines (each keeping its
@@ -248,6 +283,32 @@ mod tests {
         assert_eq!(collapse_cr("42%\r".into()), "42%\r");
         // overwrite is positional: a shorter frame leaves the tail behind
         assert_eq!(collapse_cr("12345\rab".into()), "ab345");
+    }
+
+    #[test]
+    fn save_is_byte_identical_to_nbformat_write() {
+        // json.dumps(nb, sort_keys=True, indent=1, ensure_ascii=False) + "\n"
+        let canonical = "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"a1\",\n   \"metadata\": {},\n   \"outputs\": [],\n   \"source\": [\n    \"x = 1\\n\",\n    \"é\"\n   ]\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}\n";
+        let path = std::env::temp_dir().join(format!("jotter-fmt-{}.ipynb", std::process::id()));
+        std::fs::write(&path, canonical).unwrap();
+        Notebook::open(&path).unwrap().save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(saved, canonical);
+    }
+
+    #[test]
+    fn pre_4_5_notebooks_upgrade_with_cell_ids() {
+        let mut nb: Notebook = serde_json::from_str(
+            r#"{"cells": [{"cell_type": "code", "metadata": {}, "source": "", "outputs": []},
+                          {"cell_type": "markdown", "id": "keep", "metadata": {}, "source": ""}],
+                "metadata": {}, "nbformat": 4, "nbformat_minor": 4}"#,
+        )
+        .unwrap();
+        nb.upgrade_to_4_5();
+        assert_eq!(nb.extra["nbformat_minor"], 5);
+        assert!(nb.cells[0].extra["id"].as_str().is_some_and(|id| id.len() == 8));
+        assert_eq!(nb.cells[1].extra["id"], "keep");
     }
 
     #[test]

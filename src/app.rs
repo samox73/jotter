@@ -1,7 +1,7 @@
 use crate::editor::{Editor, Outcome};
 use crate::kernel::{Event, Kernel};
 use crate::nvim::{Backend, ModeKind, NvimCell, NvimSession};
-use crate::notebook::{Cell, Notebook};
+use crate::notebook::{Cell, Notebook, new_cell_id};
 use crate::ui::Rendered;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -49,6 +49,9 @@ enum UndoOp {
     Inserted(usize),
     Deleted(usize, Box<Cell>),
     Moved(usize, usize),
+    /// Source edit: only the text is restored, so outputs that arrived
+    /// since (the cell was re-run) survive the undo.
+    Source(usize, String),
     Replaced(usize, Box<Cell>),
 }
 
@@ -99,6 +102,11 @@ pub struct App {
     events_tx: mpsc::UnboundedSender<Event>,
     /// clear_output(wait=True) received: clear on that parent's next output.
     pending_clear: HashSet<String>,
+    /// Executions that got one of their two end signals (shell execute_reply,
+    /// iopub idle); the second one finishes them. iopub and shell are separate
+    /// sockets, so outputs may still arrive after the reply — only the idle
+    /// status (ordered on iopub after all outputs) proves the stream is done.
+    half_done: HashSet<String>,
     /// mtime of the file as we last saw it on disk (external-change check).
     disk_mtime: Option<SystemTime>,
     /// Changes since the last autosave/save (drives the sidecar write).
@@ -130,7 +138,7 @@ fn mtime(path: &std::path::Path) -> Option<SystemTime> {
 
 fn new_code_cell() -> Cell {
     let mut extra = Map::new();
-    extra.insert("id".into(), uuid::Uuid::new_v4().to_string()[..8].into());
+    extra.insert("id".into(), new_cell_id().into());
     extra.insert("metadata".into(), Value::Object(Map::new()));
     extra.insert("execution_count".into(), Value::Null);
     Cell {
@@ -185,6 +193,7 @@ impl App {
             kernel_name,
             events_tx,
             pending_clear: HashSet::new(),
+            half_done: HashSet::new(),
             disk_mtime: None,
             autosave_pending: false,
             started: HashMap::new(),
@@ -272,9 +281,7 @@ impl App {
             .selected
             .min(self.notebook.cells.len().saturating_sub(1));
         // in-flight executions point at cells that no longer exist as indexed
-        self.running.clear();
-        self.started.clear();
-        self.pending_clear.clear();
+        self.forget_executions();
         self.undo_stack.clear();
         self.dirty = false;
         self.autosave_pending = false;
@@ -648,10 +655,9 @@ impl App {
             return;
         };
         if source != cell.source {
-            let prior = cell.clone();
-            cell.source = source;
+            let prior = std::mem::replace(&mut cell.source, source);
             rendered.rebuild_cell(self.selected, cell);
-            self.push_undo(UndoOp::Replaced(self.selected, Box::new(prior)));
+            self.push_undo(UndoOp::Source(self.selected, prior));
             self.touch();
         }
     }
@@ -763,7 +769,7 @@ impl App {
                 KeyCode::Char('p') => {
                     if let Some(mut cell) = self.yanked.clone() {
                         cell.extra
-                            .insert("id".into(), uuid::Uuid::new_v4().to_string()[..8].into());
+                            .insert("id".into(), new_cell_id().into());
                         self.insert_cell_value(self.selected + 1, cell, rendered);
                     }
                 }
@@ -779,9 +785,7 @@ impl App {
                 KeyCode::Char('R') => {
                     self.kernel = None; // drop kills the old process
                     self.kernel_busy = false;
-                    self.running.clear();
-                    self.started.clear();
-                    self.pending_clear.clear();
+                    self.forget_executions();
                     self.stdin_req = None;
                     self.spawn_kernel();
                 }
@@ -855,17 +859,17 @@ impl App {
         }
     }
 
-    /// Per-cell nvim buffer key: the nbformat cell id. ponytail: cells without
-    /// one (pre-4.5 files) get a positional key — wrong after moves, but that
-    /// only costs undo continuity, never text.
+    /// Per-cell nvim buffer key: the nbformat cell id (every cell has one
+    /// since `Notebook::open` upgrades to 4.5, and new cells get one).
     fn cell_key(&self) -> String {
-        self.notebook
+        let id = self
+            .notebook
             .cells
             .get(self.selected)
             .and_then(|c| c.extra.get("id"))
             .and_then(|v| v.as_str())
-            .map(|id| format!("id-{id}"))
-            .unwrap_or_else(|| format!("pos-{}", self.selected))
+            .unwrap_or_default();
+        format!("id-{id}")
     }
 
     /// Called by main after $EDITOR closed; applies the edited source.
@@ -919,6 +923,12 @@ impl App {
                     })
                 });
                 self.selected = a;
+            }
+            UndoOp::Source(at, source) => {
+                let cell = &mut self.notebook.cells[at];
+                cell.source = source;
+                rendered.rebuild_cell(at, cell);
+                self.selected = at;
             }
             UndoOp::Replaced(at, cell) => {
                 rendered.rebuild_cell(at, &cell);
@@ -1045,6 +1055,41 @@ impl App {
         self.message = Some("cell source copied to clipboard".into());
     }
 
+    /// Drop all in-flight execution bookkeeping (restart, death, reload).
+    fn forget_executions(&mut self) {
+        self.running.clear();
+        self.started.clear();
+        self.pending_clear.clear();
+        self.half_done.clear();
+    }
+
+    /// The code cell an execution's messages route to. Anything else is
+    /// dropped: a cell turned markdown mid-run must not gain outputs.
+    fn target_cell(&self, parent: &str) -> Option<usize> {
+        let &idx = self.running.get(parent)?;
+        (self.notebook.cells.get(idx)?.cell_type == "code").then_some(idx)
+    }
+
+    /// One of an execution's two end signals arrived; finish on the second.
+    fn end_signal(&mut self, parent: String, rendered: &mut Rendered) {
+        if !self.running.contains_key(&parent) {
+            return; // idle of kernel_info etc., or a forgotten execution
+        }
+        if self.half_done.insert(parent.clone()) {
+            return;
+        }
+        self.half_done.remove(&parent);
+        // gutter timing: wall time from execute_input to the end
+        if let (Some(idx), Some(t)) = (self.target_cell(&parent), self.started.get(&parent))
+            && let Some(b) = rendered.blocks.get_mut(idx)
+        {
+            b.elapsed = Some(t.elapsed());
+        }
+        self.running.remove(&parent);
+        self.started.remove(&parent);
+        self.pending_clear.remove(&parent);
+    }
+
     fn remap_running(&mut self, f: impl Fn(usize) -> Option<usize>) {
         self.running = self
             .running
@@ -1083,7 +1128,7 @@ impl App {
                 self.kernel = Some(*kernel);
             }
             Event::Output { parent, output } => {
-                if let Some(&idx) = self.running.get(&parent) {
+                if let Some(idx) = self.target_cell(&parent) {
                     let cell = &mut self.notebook.cells[idx];
                     if self.pending_clear.remove(&parent) {
                         cell.outputs = Some(Vec::new());
@@ -1096,7 +1141,7 @@ impl App {
             Event::Clear { parent, wait } => {
                 if wait {
                     self.pending_clear.insert(parent);
-                } else if let Some(&idx) = self.running.get(&parent) {
+                } else if let Some(idx) = self.target_cell(&parent) {
                     let cell = &mut self.notebook.cells[idx];
                     cell.outputs = Some(Vec::new());
                     rendered.rebuild_cell(idx, cell);
@@ -1104,7 +1149,7 @@ impl App {
                 }
             }
             Event::ExecutionCount { parent, count } => {
-                if let Some(&idx) = self.running.get(&parent) {
+                if let Some(idx) = self.target_cell(&parent) {
                     self.notebook.cells[idx]
                         .extra
                         .insert("execution_count".into(), count.into());
@@ -1124,24 +1169,17 @@ impl App {
                     request,
                 });
             }
-            Event::Busy(b) => self.kernel_busy = b,
-            Event::Done { parent } => {
-                // gutter timing: wall time from execute_input to the reply
-                if let (Some(&idx), Some(t)) =
-                    (self.running.get(&parent), self.started.get(&parent))
-                    && let Some(b) = rendered.blocks.get_mut(idx)
-                {
-                    b.elapsed = Some(t.elapsed());
+            Event::Status { parent, busy } => {
+                self.kernel_busy = busy;
+                if !busy {
+                    self.end_signal(parent, rendered);
                 }
-                self.running.remove(&parent);
-                self.started.remove(&parent);
-                self.pending_clear.remove(&parent);
             }
+            Event::Done { parent } => self.end_signal(parent, rendered),
             Event::Dead(reason) => {
                 self.kernel = None;
                 self.kernel_busy = false;
-                self.running.clear();
-                self.started.clear();
+                self.forget_executions();
                 self.stdin_req = None;
                 self.message = Some(format!("{reason} — R to restart"));
             }
@@ -1153,6 +1191,70 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// App over a one-code-cell notebook, plus its render cache.
+    fn one_cell_app(tag: &str) -> (App, Rendered) {
+        let path = std::env::temp_dir().join(format!("jotter-{tag}-{}.ipynb", std::process::id()));
+        let nb = serde_json::json!({
+            "cells": [{"cell_type": "code", "id": "c1", "metadata": {}, "execution_count": null,
+                       "outputs": [], "source": ["x"]}],
+            "metadata": {}, "nbformat": 4, "nbformat_minor": 5
+        });
+        std::fs::write(&path, nb.to_string()).unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let app = App::open(path.clone(), None, tx).unwrap();
+        std::fs::remove_file(&path).ok();
+        let rendered = Rendered::build(&app.notebook, None, Default::default());
+        (app, rendered)
+    }
+
+    fn stream(text: &str) -> Value {
+        serde_json::json!({"output_type": "stream", "name": "stdout", "text": text})
+    }
+
+    #[test]
+    fn execution_ends_on_reply_and_idle_in_either_order() {
+        let (mut app, mut r) = one_cell_app("end");
+        for (first, second) in [
+            (Event::Done { parent: "m".into() }, Event::Status { parent: "m".into(), busy: false }),
+            (Event::Status { parent: "m".into(), busy: false }, Event::Done { parent: "m".into() }),
+        ] {
+            app.notebook.cells[0].outputs = Some(Vec::new());
+            app.running.insert("m".into(), 0);
+            app.apply_kernel_event(first, &mut r);
+            // output racing the reply (separate sockets) still lands
+            app.apply_kernel_event(Event::Output { parent: "m".into(), output: stream("late\n") }, &mut r);
+            assert_eq!(app.notebook.cells[0].outputs.as_ref().unwrap().len(), 1);
+            app.apply_kernel_event(second, &mut r);
+            assert!(app.running.is_empty() && app.half_done.is_empty());
+        }
+        // idle of a request we never sent (kernel_info) is ignored
+        app.apply_kernel_event(Event::Status { parent: "other".into(), busy: false }, &mut r);
+        assert!(app.half_done.is_empty());
+    }
+
+    #[test]
+    fn non_code_cells_never_receive_kernel_output() {
+        let (mut app, mut r) = one_cell_app("toggle");
+        app.running.insert("m".into(), 0);
+        app.toggle_type(&mut r); // code -> markdown mid-run
+        app.apply_kernel_event(Event::ExecutionCount { parent: "m".into(), count: 3 }, &mut r);
+        app.apply_kernel_event(Event::Output { parent: "m".into(), output: stream("x\n") }, &mut r);
+        let cell = &app.notebook.cells[0];
+        assert!(cell.outputs.is_none());
+        assert!(!cell.extra.contains_key("execution_count"));
+    }
+
+    #[test]
+    fn undoing_a_source_edit_keeps_newer_outputs() {
+        let (mut app, mut r) = one_cell_app("undo");
+        app.update_cell_source("y".into(), &mut r);
+        app.notebook.cells[0].push_output(stream("ran\n")); // re-run after the edit
+        app.undo(&mut r);
+        let cell = &app.notebook.cells[0];
+        assert_eq!(cell.source, "x");
+        assert_eq!(cell.outputs.as_ref().unwrap().len(), 1);
+    }
 
     #[test]
     fn wheel_gesture_latches_to_its_initial_target() {

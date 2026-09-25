@@ -35,7 +35,7 @@ impl log::Log for FileLogger {
 
 /// Install the file logger. Errors are returned for the caller to print.
 pub fn init(path: &std::path::Path) -> anyhow::Result<()> {
-    let file = File::create(path)?;
+    let file = File::options().create(true).append(true).open(path)?;
     log::set_boxed_logger(Box::new(FileLogger(Mutex::new(file))))?;
     log::set_max_level(log::LevelFilter::Debug);
     Ok(())

@@ -28,9 +28,9 @@ pub enum Event {
         prompt: String,
         password: bool,
     },
-    /// iopub status: kernel busy/idle.
-    Busy(bool),
-    /// execute_reply arrived: this execution is finished.
+    /// iopub status: kernel busy/idle while handling request `parent`.
+    Status { parent: String, busy: bool },
+    /// execute_reply arrived (the execution ends once its idle status is in too).
     Done { parent: String },
     /// The kernel process exited on its own (reason includes last stderr line).
     Dead(String),
@@ -168,6 +168,11 @@ impl Kernel {
             .command(&connection_file, Some(std::process::Stdio::piped()), None)
             .map_err(|e| anyhow!("kernel argv: {e}"))?;
         cmd.current_dir(&notebook_dir);
+        // Orphan protection for exits that skip Drop (signals, panics, the
+        // runtime tearing down the monitor task): ipykernel's parent poller
+        // exits once its parent is gone — what jupyter_client sets too.
+        cmd.env("JPY_PARENT_PID", std::process::id().to_string());
+        cmd.kill_on_drop(true);
         let mut child = cmd.spawn().context("spawning kernel process")?;
         let pid = child.id();
         log::info!(
@@ -411,10 +416,10 @@ fn translate_iopub(msg: JupyterMessage) -> Option<Event> {
             let count = serde_json::to_value(x.execution_count).ok()?.as_i64()?;
             Some(Event::ExecutionCount { parent, count })
         }
-        C::Status(x) => Some(Event::Busy(matches!(
-            x.execution_state,
-            ExecutionState::Busy
-        ))),
+        C::Status(x) => Some(Event::Status {
+            parent,
+            busy: matches!(x.execution_state, ExecutionState::Busy),
+        }),
         _ => None,
     }
 }
@@ -422,6 +427,8 @@ fn translate_iopub(msg: JupyterMessage) -> Option<Event> {
 /// Serialize a protocol content struct and stamp the nbformat output_type.
 fn nb_output<T: Serialize>(parent: String, ty: &str, x: T) -> Option<Event> {
     let mut output = serde_json::to_value(x).ok()?;
+    // wire-only field (display_id routing); nbformat outputs reject it
+    output.as_object_mut()?.remove("transient");
     output["output_type"] = ty.into();
     Some(Event::Output { parent, output })
 }
@@ -429,6 +436,22 @@ fn nb_output<T: Serialize>(parent: String, ty: &str, x: T) -> Option<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outputs_drop_wire_only_transient() {
+        use jupyter_protocol::messaging::{DisplayData, Transient};
+        let x = DisplayData {
+            transient: Some(Transient {
+                display_id: Some("d1".into()),
+            }),
+            ..Default::default()
+        };
+        let Some(Event::Output { output, .. }) = nb_output("p".into(), "display_data", x) else {
+            panic!("expected an output event");
+        };
+        assert!(output.get("transient").is_none());
+        assert_eq!(output["output_type"], "display_data");
+    }
 
     /// End-to-end against a real python kernel. Ignored by default because it
     /// needs ipykernel installed; run with `cargo test -- --ignored`.
