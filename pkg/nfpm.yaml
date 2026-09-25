@@ -1,0 +1,22 @@
+# deb/rpm/apk packages from the static release binary; driven by release.yml
+name: jotter
+arch: ${ARCH}
+version: ${VERSION}
+maintainer: Samuel Recker <samuel.recker@univie.ac.at>
+description: A fast Jupyter notebook TUI
+homepage: https://github.com/samox73/jotter
+license: MIT OR Apache-2.0
+contents:
+  - src: ./jotter
+    dst: /usr/bin/jotter
+  - src: ./LICENSE-MIT
+    dst: /usr/share/licenses/jotter/LICENSE-MIT
+  - src: ./LICENSE-APACHE
+    dst: /usr/share/licenses/jotter/LICENSE-APACHE
+overrides:
+  deb:
+    recommends: [python3-ipykernel]
+  rpm:
+    recommends: [python3-ipykernel]
+  apk:
+    recommends: [py3-ipykernel]

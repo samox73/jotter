@@ -15,6 +15,7 @@ Open, edit, and run real `.ipynb` notebooks in your terminal with vim keys, inli
 </div>
 
 ## Features
+<!-- ANCHOR: features -->
 
 - **Real nbformat**: opens and saves `.ipynb` losslessly — cell ids, metadata, and fields written by other tools survive round-trips untouched.
 - **Fast**: single-digit-microsecond redraws (Rust + [ratatui](https://ratatui.rs)); cell bodies are cached and rebuilt per cell, never per keystroke.
@@ -34,16 +35,34 @@ Open, edit, and run real `.ipynb` notebooks in your terminal with vim keys, inli
 - **New notebooks and save-as**: `jotter new.ipynb` starts an empty notebook (written on the first `w`, with the kernelspec filled in); `S` saves under a new name.
 - **input() support**, run-all/above/below with a queued/running gutter, `/` search across cells, cell-op undo/redo, split/merge cells, clear outputs, per-cell execution timing, a log viewer (`L`), and a per-cell debug report (`D`, copied to the clipboard) for bug reports.
 
+<!-- ANCHOR_END: features -->
+
 ## Install
+<!-- ANCHOR: install -->
+
+Prebuilt static binaries (x86_64/aarch64, any distro) and packages are attached to every [release](https://github.com/samox73/jotter/releases):
 
 ```sh
-cargo install --path .   # or: make install
-nix run github:samox/jotter -- notebook.ipynb   # or build via the bundled flake
+# Debian / Ubuntu
+sudo apt install ./jotter_*_amd64.deb
+# Fedora / RHEL / openSUSE
+sudo dnf install ./jotter-*.x86_64.rpm
+# Alpine
+sudo apk add --allow-untrusted ./jotter_*_x86_64.apk
+# Nix
+nix run github:samox73/jotter -- notebook.ipynb
+# Cargo (crates.io name: jotter-tui, binary: jotter)
+cargo install jotter-tui --locked
+# Any distro: static binary
+curl -L https://github.com/samox73/jotter/releases/latest/download/jotter-x86_64-linux.tar.gz | tar xz jotter
 ```
 
-Rust 1.85+ (edition 2024). No native dependencies — the ZMQ stack is pure Rust.
+From source: `cargo install --path .` (or `make install`). Rust 1.85+ (edition 2024). No native dependencies — the ZMQ stack is pure Rust. You need a Jupyter kernel to run cells, e.g. `pip install ipykernel`.
+
+<!-- ANCHOR_END: install -->
 
 ## Usage
+<!-- ANCHOR: usage -->
 
 ```sh
 jotter notebook.ipynb              # kernel from notebook metadata (new file if missing)
@@ -75,7 +94,10 @@ Press `?` inside for the full key reference.
 | `Ctrl+C` / `R` | interrupt / restart kernel |
 | `L` / `D` | view logs / debug info for the cell (copied to clipboard) |
 
+<!-- ANCHOR_END: usage -->
+
 ## Config
+<!-- ANCHOR: config -->
 
 Optional, at `~/.config/jotter/config.toml` — every key has a default:
 
@@ -94,7 +116,10 @@ With `editor = "nvim"`, a hidden `nvim --embed` owns the cell buffer while jotte
 
 **nvim UI is not drawn.** jotter renders only the cell's text; nvim runs without a UI attached. Anything that opens a window — pickers (telescope `<leader>sg`, fzf-lua), floating hovers/diagnostics, file explorers, splits, the cmdline window — can't be shown, and before this guard its buffer would have been read back *as the cell*. jotter now checks after every key that nvim is still in the cell buffer and a normal window; if not, it closes the foreign windows, leaves insert mode, returns to the cell, and says so on the status line. The cell's text is never touched, but the plugin action is lost. Guard such mappings with `if not vim.g.jotter then ... end`.
 
+<!-- ANCHOR_END: config -->
+
 ## Known limits
+<!-- ANCHOR: limits -->
 
 - Images wider than the terminal crop at the right edge instead of scaling (keeps the one-time high-quality downscale; no render-time rescaling, no aliasing).
 - A font-size change (terminal zoom) re-renders every cell: output-viewport positions reset and images are re-transmitted.
@@ -102,6 +127,10 @@ With `editor = "nvim"`, a hidden `nvim --embed` owns the cell buffer while jotte
 - nvim backend: plugin windows (pickers, floats, explorers, splits) are not supported — they are closed as soon as they open (see above). Plugin popups that don't take focus (e.g. nvim-cmp's menu) are simply invisible.
 - Non-goals: ipywidgets (placeholder only), multiple tabs, remote/existing kernels, Windows.
 
+<!-- ANCHOR_END: limits -->
+
 ## Terminal support
+<!-- ANCHOR: terminal -->
 
 Best in [kitty](https://sw.kovidgoyal.net/kitty/) (graphics + keyboard protocol → `Shift+Enter`, distinct modifier keys). Any terminal works: graphics fall back to sixel/iTerm2/unicode halfblocks, and `r` runs cells where `Shift+Enter` can't be distinguished.
+<!-- ANCHOR_END: terminal -->

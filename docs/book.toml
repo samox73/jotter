@@ -1,0 +1,8 @@
+[book]
+title = "jOtter 🦦"
+description = "A fast Jupyter notebook TUI"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/samox73/jotter"
+edit-url-template = "https://github.com/samox73/jotter/edit/main/README.md"

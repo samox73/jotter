@@ -1,2 +1,4 @@
 /target
 *.ipynb.autosave
+/docs/book
+/docs/src/assets

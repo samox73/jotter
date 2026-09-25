@@ -1,8 +1,20 @@
 [package]
-name = "jotter"
+name = "jotter-tui"
 description = "jOtter — a fast Jupyter notebook TUI. The Jupyter otter. 🦦"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/samox73/jotter"
+homepage = "https://samox73.github.io/jotter"
+readme = "README.md"
+keywords = ["jupyter", "notebook", "tui", "ipynb", "terminal"]
+categories = ["command-line-utilities", "science"]
+include = ["src/**/*", "LICENSE-*", "README.md"]
+
+[[bin]]
+name = "jotter"
+path = "src/main.rs"
 
 [dependencies]
 ansi-to-tui = "8.0.1"

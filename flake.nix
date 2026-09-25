@@ -12,13 +12,14 @@
       packages = forAllSystems (pkgs: rec {
         jotter = pkgs.rustPlatform.buildRustPackage {
           pname = "jotter";
-          version = "0.1.0";
+          version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
           # tests spawn no kernels (the real-kernel test is #[ignore]d)
           meta = {
             description = "A fast Jupyter notebook TUI";
             mainProgram = "jotter";
+            license = with nixpkgs.lib.licenses; [ mit asl20 ];
           };
         };
         default = jotter;
