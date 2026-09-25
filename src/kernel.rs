@@ -3,12 +3,13 @@
 
 use anyhow::{Context, Result, anyhow};
 use jupyter_protocol::messaging::{
-    ExecuteRequest, ExecutionState, InputReply, InterruptRequest, JupyterMessage,
-    JupyterMessageContent,
+    CompleteRequest, ExecuteRequest, ExecutionState, InputReply, InspectRequest, InterruptRequest,
+    JupyterMessage, JupyterMessageContent,
 };
 use jupyter_protocol::{ConnectionInfo, Transport};
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 
@@ -16,10 +17,27 @@ use tokio::sync::mpsc;
 pub enum Event {
     /// Background launch finished.
     Ready(Box<Kernel>),
+    /// Background launch `launch` failed (reason for the status line).
+    LaunchFailed { launch: u64, reason: String },
     /// nbformat-shaped output object for the cell that sent `parent`.
     Output { parent: String, output: Value },
     /// `execute_input` arrived: the kernel assigned an execution count.
     ExecutionCount { parent: String, count: i64 },
+    /// update_display_data: replace every output carrying this display_id.
+    UpdateDisplay { display_id: String, output: Value },
+    /// complete_reply: `matches` replace the code from char `start` to the
+    /// request's cursor;
+    /// `types` maps a match to its (kind, signature) where IPython said
+    /// (`_jupyter_types_experimental`; jedi fills signatures, the live
+    /// completer only kinds).
+    Complete {
+        parent: String,
+        matches: Vec<String>,
+        start: usize,
+        types: HashMap<String, (String, String)>,
+    },
+    /// inspect_reply: `text` is the text/plain doc (may carry ANSI colors).
+    Inspect { parent: String, text: Option<String> },
     /// clear_output arrived; with `wait` the clear is deferred to next output.
     Clear { parent: String, wait: bool },
     /// The kernel asked for user input (`input()`); reply via `Kernel::reply_input`.
@@ -43,6 +61,11 @@ pub struct Kernel {
     pub name: String,
     /// Directory the kernelspec was found in — disambiguates venv vs global.
     pub spec_dir: PathBuf,
+    /// kernelspec display name and language (notebook metadata, highlighting).
+    pub display_name: String,
+    pub language: String,
+    /// Which `App::spawn_kernel` call produced this kernel (stale-launch guard).
+    pub launch: u64,
     session: String,
     shell_tx: mpsc::UnboundedSender<JupyterMessage>,
     control_tx: mpsc::UnboundedSender<JupyterMessage>,
@@ -107,13 +130,20 @@ async fn resolve_kernelspec(
 impl Kernel {
     /// Resolve + launch a kernel and wire all channels. Run in the background;
     /// reports back as `Event::Ready` / `Event::Info` on `tx`.
-    pub async fn launch(name: String, notebook_dir: PathBuf, tx: mpsc::UnboundedSender<Event>) {
+    pub async fn launch(
+        name: String,
+        notebook_dir: PathBuf,
+        tx: mpsc::UnboundedSender<Event>,
+        launch: u64,
+    ) {
         match Self::launch_inner(&name, &notebook_dir, tx.clone()).await {
-            Ok(kernel) => {
+            Ok(mut kernel) => {
+                kernel.launch = launch;
                 let _ = tx.send(Event::Ready(Box::new(kernel)));
             }
             Err(e) => {
-                let _ = tx.send(Event::Info(format!("kernel '{name}' failed: {e:#}")));
+                let reason = format!("kernel '{name}' failed: {e:#}");
+                let _ = tx.send(Event::LaunchFailed { launch, reason });
             }
         }
     }
@@ -132,6 +162,8 @@ impl Kernel {
         let spec = resolve_kernelspec(name, &notebook_dir).await?;
         let resolved_name = spec.kernel_name.clone();
         let spec_dir = spec.path.clone();
+        let display_name = spec.kernelspec.display_name.clone();
+        let language = spec.kernelspec.language.clone();
         log::info!(
             "kernelspec '{resolved_name}' from {}, argv {:?}",
             spec_dir.display(),
@@ -274,11 +306,27 @@ impl Kernel {
         let reply_tx = tx.clone();
         tokio::spawn(async move {
             while let Ok(msg) = shell_recv.read().await {
-                if let JupyterMessageContent::ExecuteReply(_) = msg.content {
-                    let parent = parent_id(&msg);
-                    if reply_tx.send(Event::Done { parent }).is_err() {
-                        break;
-                    }
+                let parent = parent_id(&msg);
+                let event = match msg.content {
+                    JupyterMessageContent::ExecuteReply(_) => Event::Done { parent },
+                    JupyterMessageContent::CompleteReply(x) => Event::Complete {
+                        parent,
+                        types: completion_types(&x.metadata),
+                        matches: x.matches,
+                        start: x.cursor_start,
+                    },
+                    JupyterMessageContent::InspectReply(x) => Event::Inspect {
+                        parent,
+                        text: x
+                            .found
+                            .then(|| serde_json::to_value(&x.data).ok())
+                            .flatten()
+                            .and_then(|d| d.get("text/plain")?.as_str().map(String::from)),
+                    },
+                    _ => continue,
+                };
+                if reply_tx.send(event).is_err() {
+                    break;
                 }
             }
         });
@@ -330,6 +378,9 @@ impl Kernel {
         Ok(Kernel {
             name: resolved_name,
             spec_dir,
+            display_name,
+            language,
+            launch: 0,
             session,
             shell_tx,
             control_tx,
@@ -353,8 +404,45 @@ impl Kernel {
                 stop_on_error: true,
             },
             None,
-        )
-        .with_session(&self.session);
+        );
+        self.shell(msg)
+    }
+
+    /// Run `code` silently (no outputs recorded, no history, no count):
+    /// kernel setup like switching the completer.
+    pub fn execute_silent(&self, code: &str) {
+        let msg = JupyterMessage::new(
+            ExecuteRequest {
+                code: code.into(),
+                silent: true,
+                store_history: false,
+                user_expressions: None,
+                allow_stdin: false,
+                stop_on_error: false,
+            },
+            None,
+        );
+        self.shell(msg);
+    }
+
+    /// Queue a complete_request; `cursor_pos` counts unicode code points.
+    pub fn complete(&self, code: String, cursor_pos: usize) -> String {
+        self.shell(JupyterMessage::new(CompleteRequest { code, cursor_pos }, None))
+    }
+
+    /// Queue an inspect_request (Shift+Tab docs) at `cursor_pos`.
+    pub fn inspect(&self, code: String, cursor_pos: usize) -> String {
+        let req = InspectRequest {
+            code,
+            cursor_pos,
+            detail_level: Some(0),
+        };
+        self.shell(JupyterMessage::new(req, None))
+    }
+
+    /// Send on shell under our session; returns the msg_id replies carry.
+    fn shell(&self, msg: JupyterMessage) -> String {
+        let msg = msg.with_session(&self.session);
         let id = msg.header.msg_id.clone();
         let _ = self.shell_tx.send(msg);
         id
@@ -393,6 +481,17 @@ impl Drop for Kernel {
     }
 }
 
+/// `_jupyter_types_experimental` of a complete_reply: text -> (type, signature).
+fn completion_types(meta: &serde_json::Map<String, Value>) -> HashMap<String, (String, String)> {
+    let str_of = |e: &Value, k: &str| e.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    meta.get("_jupyter_types_experimental")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|e| (str_of(e, "text"), (str_of(e, "type"), str_of(e, "signature"))))
+        .collect()
+}
+
 fn parent_id(msg: &JupyterMessage) -> String {
     msg.parent_header
         .as_ref()
@@ -407,6 +506,13 @@ fn translate_iopub(msg: JupyterMessage) -> Option<Event> {
         C::StreamContent(x) => nb_output(parent, "stream", x),
         C::ExecuteResult(x) => nb_output(parent, "execute_result", x),
         C::DisplayData(x) => nb_output(parent, "display_data", x),
+        C::UpdateDisplayData(x) => {
+            let display_id = x.transient.display_id.clone()?;
+            match nb_output(parent, "display_data", x)? {
+                Event::Output { output, .. } => Some(Event::UpdateDisplay { display_id, output }),
+                _ => None,
+            }
+        }
         C::ErrorOutput(x) => nb_output(parent, "error", x),
         C::ClearOutput(x) => Some(Event::Clear {
             parent,
@@ -426,9 +532,9 @@ fn translate_iopub(msg: JupyterMessage) -> Option<Event> {
 
 /// Serialize a protocol content struct and stamp the nbformat output_type.
 fn nb_output<T: Serialize>(parent: String, ty: &str, x: T) -> Option<Event> {
+    // `transient` (display_id) stays for update_display_data routing;
+    // Notebook::save strips it
     let mut output = serde_json::to_value(x).ok()?;
-    // wire-only field (display_id routing); nbformat outputs reject it
-    output.as_object_mut()?.remove("transient");
     output["output_type"] = ty.into();
     Some(Event::Output { parent, output })
 }
@@ -437,29 +543,13 @@ fn nb_output<T: Serialize>(parent: String, ty: &str, x: T) -> Option<Event> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn outputs_drop_wire_only_transient() {
-        use jupyter_protocol::messaging::{DisplayData, Transient};
-        let x = DisplayData {
-            transient: Some(Transient {
-                display_id: Some("d1".into()),
-            }),
-            ..Default::default()
-        };
-        let Some(Event::Output { output, .. }) = nb_output("p".into(), "display_data", x) else {
-            panic!("expected an output event");
-        };
-        assert!(output.get("transient").is_none());
-        assert_eq!(output["output_type"], "display_data");
-    }
-
     /// End-to-end against a real python kernel. Ignored by default because it
     /// needs ipykernel installed; run with `cargo test -- --ignored`.
     #[tokio::test]
     #[ignore = "spawns a real python kernel (needs ipykernel)"]
     async fn execute_roundtrip_on_real_kernel() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        Kernel::launch("python3".into(), std::env::temp_dir(), tx).await;
+        Kernel::launch("python3".into(), std::env::temp_dir(), tx, 1).await;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
         async fn next(
             rx: &mut mpsc::UnboundedReceiver<Event>,
@@ -473,7 +563,7 @@ mod tests {
         let kernel = loop {
             match next(&mut rx, deadline).await {
                 Event::Ready(k) => break *k,
-                Event::Info(msg) => panic!("launch failed: {msg}"),
+                Event::LaunchFailed { reason, .. } => panic!("launch failed: {reason}"),
                 _ => {}
             }
         };
@@ -490,5 +580,45 @@ mod tests {
             }
         }
         assert!(out.contains("42"), "expected 42 in stdout, got: {out:?}");
+    }
+
+    /// complete/inspect replies route back (ignored: needs ipykernel).
+    #[tokio::test]
+    #[ignore = "spawns a real python kernel (needs ipykernel)"]
+    async fn complete_and_inspect_on_real_kernel() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        Kernel::launch("python3".into(), std::env::temp_dir(), tx, 1).await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        let mut next = async || {
+            tokio::time::timeout_at(deadline, rx.recv())
+                .await
+                .expect("timed out waiting for kernel event")
+                .expect("event channel closed")
+        };
+        let kernel = loop {
+            if let Event::Ready(k) = next().await {
+                break *k;
+            }
+        };
+        let code = "import os\nos.getc";
+        let id = kernel.complete(code.into(), code.chars().count());
+        loop {
+            if let Event::Complete { parent, matches, start, .. } = next().await
+                && parent == id
+            {
+                assert!(matches.iter().any(|m| m.trim_start_matches('.') == "getcwd"), "{matches:?}");
+                assert!(start == 13 || start == 12, "token start {start}");
+                break;
+            }
+        }
+        let id = kernel.inspect("len".into(), 3);
+        loop {
+            if let Event::Inspect { parent, text } = next().await
+                && parent == id
+            {
+                assert!(text.is_some_and(|t| t.contains("len")));
+                break;
+            }
+        }
     }
 }

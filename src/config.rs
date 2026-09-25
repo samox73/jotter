@@ -23,6 +23,15 @@ pub struct Config {
     /// editing: dw, ciw, visual mode, counts, macros, `.`). Falls back to
     /// builtin when nvim is missing or dies.
     pub editor: String,
+    /// nvim backend: load the user's init.lua/init.vim and plugins (with
+    /// `g:jotter = 1` set first, so configs can skip UI-only plugins).
+    /// false = clean `-u NONE` nvim.
+    pub nvim_user_config: bool,
+    /// Keep IPython's jedi completer (static analysis: slow, but completes
+    /// names not yet executed). Off = IPython's fast live-object completer.
+    pub jedi: bool,
+    /// Open completion automatically after `.` following a name (Python).
+    pub complete_on_dot: bool,
 }
 
 impl Default for Config {
@@ -33,6 +42,9 @@ impl Default for Config {
             autosave_secs: 30,
             theme: "base16-ocean.dark".into(),
             editor: "builtin".into(),
+            nvim_user_config: true,
+            jedi: false,
+            complete_on_dot: true,
         }
     }
 }
@@ -48,6 +60,14 @@ pub fn path() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
         .map(|d| d.join("jotter/config.toml"))
+}
+
+/// `$XDG_STATE_HOME/jotter` (default `~/.local/state/jotter`): autosaves.
+pub fn state_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
+        .map(|d| d.join("jotter"))
 }
 
 /// Load the config file (once, before `get`). Returns a user-facing warning

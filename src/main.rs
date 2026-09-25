@@ -39,6 +39,13 @@ struct Args {
     log: Option<PathBuf>,
 }
 
+/// Physically clear the screen. (`Terminal::clear` would also query the
+/// cursor position, which fails on terminals that don't answer DSR.)
+fn clear_screen() {
+    use crossterm::terminal::{Clear, ClearType};
+    let _ = crossterm::execute!(std::io::stdout(), Clear(ClearType::All));
+}
+
 fn enter_extras(enhanced: bool) {
     if enhanced {
         let _ = crossterm::execute!(
@@ -69,6 +76,10 @@ async fn main() -> Result<()> {
     app.spawn_kernel();
 
     let mut terminal = ratatui::init(); // installs a panic hook that restores the terminal
+    // The alternate screen may still hold a killed session's frame (kill -9
+    // can't restore the terminal): ratatui's first frame only writes cells
+    // that differ from a *blank* screen, so blank it for real first.
+    clear_screen();
     // Query graphics protocol + font size (before EventStream claims stdin).
     // Falls back to unicode halfblocks; timeout-guarded for dumb terminals.
     let picker = if args.no_images {
@@ -76,6 +87,15 @@ async fn main() -> Result<()> {
     } else {
         ratatui_image::picker::Picker::from_query_stdio().ok()
     };
+    // kitty keeps images across a crashed session: drop them all
+    if picker
+        .as_ref()
+        .is_some_and(|p| p.protocol_type() == ratatui_image::picker::ProtocolType::Kitty)
+    {
+        use std::io::Write;
+        let _ = write!(std::io::stdout(), "\x1b_Ga=d,d=A\x1b\\");
+        let _ = std::io::stdout().flush();
+    }
     let dir = app.path.parent().map(PathBuf::from).unwrap_or_default();
     let mut rendered = Rendered::build(&app.notebook, picker, dir);
 
@@ -104,6 +124,10 @@ async fn run(
     enhanced: bool,
 ) -> Result<()> {
     let mut term_events = EventStream::new();
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sighup = signal(SignalKind::hangup())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
     let mut cursor_mode: Option<nvim::ModeKind> = None;
     // Autosave sidecar tick; writes only when something changed since last time.
     let mut autosave = tokio::time::interval(std::time::Duration::from_secs(
@@ -146,6 +170,11 @@ async fn run(
                     app.apply_kernel_event(event, rendered);
                 }
             }
+            // terminal closed / killed: keep the work, restore the terminal,
+            // and let Drop take the kernel down with us
+            _ = sigterm.recv() => app.on_signal("SIGTERM"),
+            _ = sighup.recv() => app.on_signal("SIGHUP"),
+            _ = sigint.recv() => app.on_signal("SIGINT"),
             // fallback for terminals without focus events, then the sidecar
             _ = autosave.tick() => {
                 app.check_disk(rendered);
@@ -166,7 +195,7 @@ fn external_edit(
     let Some(cell) = app.notebook.cells.get(app.selected) else {
         return;
     };
-    let suffix = if cell.cell_type == "code" { "py" } else { "md" };
+    let suffix = rendered.edit_suffix(cell);
     let tmp = std::env::temp_dir().join(format!("jotter-cell-{}.{suffix}", std::process::id()));
     let editor_cmd = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
@@ -177,6 +206,7 @@ fn external_edit(
         ratatui::restore();
         let status = std::process::Command::new(&editor_cmd).arg(&tmp).status();
         *terminal = ratatui::init();
+        clear_screen(); // the editor's screen is not ours to diff against
         enter_extras(enhanced);
         status
     });

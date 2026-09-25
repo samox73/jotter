@@ -25,7 +25,9 @@ use std::time::{Duration, Instant};
 /// nvim sits in a blocking prompt (hit-enter) or is replaying a long macro —
 /// we keep the last known state and resync on the next key.
 const KEY: Duration = Duration::from_millis(250);
-const SETUP: Duration = Duration::from_secs(5);
+/// Startup budget: a user config (plugin manager, ...) loads before the
+/// first request is answered.
+const SETUP: Duration = Duration::from_secs(10);
 
 /// Editor mode, coarse enough for rendering (chip, cursor shape, selection).
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -129,6 +131,18 @@ impl Backend {
         }
     }
 
+    /// Replace chars [start, end) of the source with `text` and put the
+    /// cursor after it (kernel completions).
+    pub fn replace_range(&mut self, start: usize, end: usize, text: &str) -> Result<()> {
+        match self {
+            Backend::Builtin(e) => {
+                e.replace_chars(start, end, text);
+                Ok(())
+            }
+            Backend::Nvim(c) => c.replace_range(start, end, text),
+        }
+    }
+
     /// Visual selection for rendering: (kind, anchor, cursor) in char coords.
     #[allow(clippy::type_complexity)] // two (row, col) pairs, not worth a type
     pub fn visual(&self) -> Option<(ModeKind, (usize, usize), (usize, usize))> {
@@ -148,6 +162,14 @@ impl Backend {
         match self {
             Backend::Builtin(_) => None,
             Backend::Nvim(c) => (!c.cmdline.is_empty()).then_some(c.cmdline.as_str()),
+        }
+    }
+
+    /// Status message from the backend (nvim closed a foreign window).
+    pub fn take_notice(&mut self) -> Option<String> {
+        match self {
+            Backend::Builtin(_) => None,
+            Backend::Nvim(c) => c.take_notice(),
         }
     }
 
@@ -259,9 +281,18 @@ fn rpc_error(err: &Value) -> String {
 }
 
 impl Rpc {
-    fn spawn() -> Result<Self> {
+    fn spawn(user_config: bool) -> Result<Self> {
+        // -i NONE -n: no shada/swap files, ever. With the user config,
+        // g:jotter is set before init.lua/init.vim so they can opt out of
+        // UI-only plugins (`if vim.g.jotter then ... end`).
+        let init: &[&str] = if user_config {
+            &["--cmd", "let g:jotter = 1"]
+        } else {
+            &["-u", "NONE"]
+        };
         let mut child = Command::new("nvim")
-            .args(["--embed", "--headless", "-u", "NONE", "-i", "NONE", "-n"])
+            .args(["--embed", "--headless", "-i", "NONE", "-n"])
+            .args(init)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -352,8 +383,9 @@ pub struct NvimSession {
 }
 
 impl NvimSession {
-    pub fn spawn() -> Result<Self> {
-        let mut rpc = Rpc::spawn()?;
+    /// `user_config`: load the user's nvim config (config.nvim_user_config).
+    pub fn spawn(user_config: bool) -> Result<Self> {
+        let mut rpc = Rpc::spawn(user_config)?;
         // channel id (for rpcnotify) is the first element of the api info
         let info = rpc.request("nvim_get_api_info", vec![], SETUP)?;
         let chan = info
@@ -373,6 +405,11 @@ impl NvimSession {
              nnoremap ZZ <Cmd>JotterWq<CR>\n\
              nnoremap ZQ <Cmd>JotterQ!<CR>\n"
         );
+        if !user_config {
+            // no ftplugins without a config: Tab must still insert spaces
+            // (a literal \t is an IndentationError waiting to happen)
+            setup += "set expandtab tabstop=4 shiftwidth=4 softtabstop=4\n";
+        }
         for (ab, cmd) in [
             ("q", "JotterQ"),
             ("qa", "JotterQ"),
@@ -421,12 +458,41 @@ pub struct NvimCell {
     anchor: (usize, usize),
     /// `getcmdtype() .. getcmdline()`; empty outside cmdline mode.
     cmdline: String,
+    /// nvim buffer number of this cell (`bufnr()`), to notice when a plugin
+    /// switched away from it.
+    bufnr: u64,
+    /// One-shot status message for jotter (a foreign window was closed).
+    notice: Option<String>,
 }
+
+/// Put nvim back into the cell: leave insert mode, close every floating
+/// window (pickers, hovers, popups) and every other split, and show the cell
+/// buffer again. `...` = the cell's buffer number.
+const RECLAIM: &str = r#"
+local buf = ...
+pcall(vim.cmd, 'stopinsert')
+-- closing one float can close its companions (telescope: prompt + results
+-- + preview), so re-check validity for every window
+for _, w in ipairs(vim.api.nvim_list_wins()) do
+  if vim.api.nvim_win_is_valid(w) and vim.api.nvim_win_get_config(w).relative ~= '' then
+    pcall(vim.api.nvim_win_close, w, true)
+  end
+end
+pcall(vim.cmd, 'silent! only!')
+if vim.api.nvim_get_current_buf() ~= buf then pcall(vim.api.nvim_set_current_buf, buf) end
+"#;
 
 impl NvimCell {
     /// Switch the session to this cell's buffer, creating it on first edit —
     /// per-cell buffers keep undo history and marks across cell switches.
-    pub fn open(mut session: NvimSession, cell_key: &str, source: &str) -> Result<Self> {
+    /// `filetype`: cell language ("python", "markdown", ...) so ftplugins,
+    /// indent rules, and filetype-specific user settings apply.
+    pub fn open(
+        mut session: NvimSession,
+        cell_key: &str,
+        source: &str,
+        filetype: &str,
+    ) -> Result<Self> {
         let src_lines: Vec<Value> = source.split('\n').map(Value::from).collect();
         let existing = match session.buffers.get(cell_key).cloned() {
             Some(b) => session
@@ -474,6 +540,12 @@ impl NvimCell {
                 // disk; undolevels=-1 keeps the initial fill out of undo
                 // history (u must not empty a freshly opened cell)
                 session.cmd("setlocal buftype=acwrite undolevels=-1")?;
+                // filetype fires FileType autocmds (ftplugins, user config);
+                // alphanumerics only, it goes through an Ex command
+                let ft: String = filetype.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+                if !ft.is_empty() {
+                    session.cmd(&format!("setlocal filetype={ft}"))?;
+                }
                 session.req(
                     "nvim_buf_set_lines",
                     vec![
@@ -488,6 +560,10 @@ impl NvimCell {
                 session.buffers.insert(cell_key.into(), buf);
             }
         }
+        let bufnr = session
+            .req("nvim_eval", vec!["bufnr('%')".into()])?
+            .as_u64()
+            .ok_or_else(|| anyhow!("bad bufnr reply"))?;
         let mut cell = Self {
             session,
             lines: vec![String::new()],
@@ -495,6 +571,8 @@ impl NvimCell {
             mode: "n".into(),
             anchor: (0, 0),
             cmdline: String::new(),
+            bufnr,
+            notice: None,
         };
         // normalize whatever mode the previous cell edit left behind
         cell.feed("<Esc>")?;
@@ -522,10 +600,25 @@ impl NvimCell {
 
     /// One deferred eval doubles as the flush barrier: nvim answers it only
     /// after the queued input has been processed, so the state is post-key.
+    ///
+    /// jotter draws only the cell buffer: nvim has no UI attached, so a
+    /// plugin window (telescope picker, float, split) would be invisible and
+    /// its buffer would be read back *as the cell*. When the current buffer
+    /// or window isn't the cell's, reclaim nvim and say so instead.
     fn readback(&mut self) -> Result<()> {
-        const STATE: &str =
-            "[getline(1,'$'), getpos('.'), mode(1), getcmdtype() .. getcmdline(), getpos('v')]";
-        match self.session.req("nvim_eval", vec![STATE.into()]) {
+        match self.session.req("nvim_eval", vec![self.state_expr().into()]) {
+            Ok(v) if Self::is_foreign(&v, self.bufnr) => {
+                self.session.req(
+                    "nvim_exec_lua",
+                    vec![RECLAIM.into(), Value::Array(vec![self.bufnr.into()])],
+                )?;
+                self.notice = Some(
+                    "nvim opened a window/picker — jotter can't draw nvim UI, so it was closed"
+                        .into(),
+                );
+                let v = self.session.req("nvim_eval", vec![self.state_expr().into()])?;
+                self.apply_state(v)
+            }
             Ok(v) => self.apply_state(v),
             Err(e) => {
                 // Deferred requests queue while nvim sits in a blocking prompt
@@ -548,9 +641,34 @@ impl NvimCell {
         }
     }
 
+    /// The per-key state query: the cell buffer's text (by number, never
+    /// "whatever is current"), cursor, mode, cmdline, visual anchor, and
+    /// where nvim actually is (for `is_foreign`).
+    fn state_expr(&self) -> String {
+        format!(
+            "[getbufline({}, 1, '$'), getpos('.'), mode(1), getcmdtype() .. getcmdline(), \
+             getpos('v'), bufnr('%'), win_gettype()]",
+            self.bufnr
+        )
+    }
+
+    /// State reply shows nvim outside the cell: another buffer is current,
+    /// or the current window is a float/preview/cmdline window.
+    fn is_foreign(v: &Value, bufnr: u64) -> bool {
+        let Some([.., cur, wintype]) = v.as_array().map(|a| a.as_slice()) else {
+            return false;
+        };
+        cur.as_u64() != Some(bufnr) || wintype.as_str().is_some_and(|t| !t.is_empty())
+    }
+
+    /// Status message for jotter, once.
+    pub fn take_notice(&mut self) -> Option<String> {
+        self.notice.take()
+    }
+
     fn apply_state(&mut self, v: Value) -> Result<()> {
         let arr = v.as_array().ok_or_else(|| anyhow!("bad state reply"))?;
-        let [lines, curpos, mode, cmdline, vpos] = arr.as_slice() else {
+        let [lines, curpos, mode, cmdline, vpos, ..] = arr.as_slice() else {
             bail!("bad state reply shape");
         };
         self.lines = lines
@@ -584,6 +702,53 @@ impl NvimCell {
             .take_while(|(i, _)| i + 1 < bcol)
             .count();
         (row, col)
+    }
+
+    /// Char offset into the joined source -> (0-based row, byte col).
+    fn byte_pos(&self, offset: usize) -> (usize, usize) {
+        let mut left = offset;
+        for (row, line) in self.lines.iter().enumerate() {
+            let len = line.chars().count();
+            if left <= len || row + 1 == self.lines.len() {
+                let byte = line.char_indices().nth(left).map_or(line.len(), |(b, _)| b);
+                return (row, byte);
+            }
+            left -= len + 1;
+        }
+        (0, 0)
+    }
+
+    fn replace_range(&mut self, start: usize, end: usize, text: &str) -> Result<()> {
+        let (sr, sc) = self.byte_pos(start);
+        let (er, ec) = self.byte_pos(end.max(start));
+        let replacement: Vec<Value> = text.split('\n').map(Value::from).collect();
+        self.session.req(
+            "nvim_buf_set_text",
+            vec![
+                0.into(),
+                (sr as u64).into(),
+                (sc as u64).into(),
+                (er as u64).into(),
+                (ec as u64).into(),
+                Value::Array(replacement),
+            ],
+        )?;
+        // cursor right after the inserted text (still in insert mode)
+        let last = text.rsplit('\n').next().unwrap_or("");
+        let rows = text.matches('\n').count();
+        let (row, col) = if rows == 0 {
+            (sr, sc + last.len())
+        } else {
+            (sr + rows, last.len())
+        };
+        self.session.req(
+            "nvim_win_set_cursor",
+            vec![
+                0.into(),
+                Value::Array(vec![((row + 1) as u64).into(), (col as u64).into()]),
+            ],
+        )?;
+        self.readback()
     }
 
     /// Mouse click: place the cursor; optionally enter insert (double click).
@@ -640,8 +805,9 @@ mod tests {
     #[test]
     #[ignore = "spawns a real nvim"]
     fn nvim_spike() {
-        let session = NvimSession::spawn().expect("spawn nvim");
-        let mut c = NvimCell::open(session, "spike", "one two\nthree four\nfive").expect("open");
+        let session = NvimSession::spawn(false).expect("spawn nvim");
+        let mut c =
+            NvimCell::open(session, "spike", "one two\nthree four\nfive", "").expect("open");
         assert_eq!(c.lines, ["one two", "three four", "five"]);
         assert_eq!((c.mode.as_str(), c.cursor), ("n", (0, 0)));
 
@@ -701,6 +867,31 @@ mod tests {
         assert_eq!((c.anchor.0, c.cursor.0), (0, 1));
         c.feed("<Esc>").unwrap();
 
+        // completion splice: replace "hel" in "hello!" mid-insert, cursor after
+        c.feed("gg0i").unwrap();
+        let mut b = Backend::Nvim(c);
+        b.replace_range(0, 3, "HEL").unwrap();
+        assert_eq!(b.source().lines().next(), Some("HELlo!"));
+        assert_eq!((b.cursor(), b.mode()), ((0, 3), ModeKind::Insert));
+        let Backend::Nvim(mut c) = b else { unreachable!() };
+        c.feed("<Esc>").unwrap();
+
+        // Tab inserts spaces, never a literal tab (clean-config expandtab)
+        c.feed("o<Tab>t<Esc>").unwrap();
+        assert!(c.lines.iter().any(|l| l == "    t"), "{:?}", c.lines);
+        c.feed("u").unwrap();
+
+        // a plugin-style float stealing focus is closed; the cell survives
+        // (two floats where closing the first closes the second, like telescope)
+        c.feed(":lua local function f(t) local b = vim.api.nvim_create_buf(false, true); vim.api.nvim_buf_set_lines(b, 0, -1, false, {t}); return vim.api.nvim_open_win(b, true, {relative='editor', row=1, col=1, width=10, height=1}) end; local r = f('RESULTS'); local p = f('PICKER'); vim.api.nvim_create_autocmd('WinClosed', {pattern = tostring(p), once = true, callback = function() pcall(vim.api.nvim_win_close, r, true) end})<CR>").unwrap();
+        assert!(c.lines.iter().all(|l| l != "PICKER"), "{:?}", c.lines);
+        assert!(c.take_notice().is_some());
+        assert_eq!(c.mode_kind(), ModeKind::Normal);
+        // ...and so is a split onto another buffer (e.g. a file opened from it)
+        c.feed(":new<CR>").unwrap();
+        assert!(c.lines.len() > 1, "cell text still read back: {:?}", c.lines);
+        assert!(c.take_notice().is_some());
+
         // cmdline echo (blind-cmdline mitigation)
         c.feed(":").unwrap();
         c.feed("wq").unwrap();
@@ -723,8 +914,8 @@ mod tests {
     #[test]
     #[ignore = "spawns a real nvim"]
     fn backend_intercepts() {
-        let session = NvimSession::spawn().expect("spawn nvim");
-        let cell = NvimCell::open(session, "intercepts", "abc").expect("open");
+        let session = NvimSession::spawn(false).expect("spawn nvim");
+        let cell = NvimCell::open(session, "intercepts", "abc", "python").expect("open");
         let mut b = Backend::Nvim(cell);
 
         // Shift+Enter runs in any mode; Esc in normal mode exits the cell

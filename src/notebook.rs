@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Notebook {
     pub cells: Vec<Cell>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Cell {
     pub cell_type: String,
     #[serde(with = "multiline")]
@@ -30,6 +30,20 @@ pub struct Cell {
 const MAX_STREAM_LINES: usize = 10_000;
 
 impl Cell {
+    /// Fresh empty code cell with a new id (nbformat 4.5 shape).
+    pub fn new_code() -> Self {
+        let mut extra = Map::new();
+        extra.insert("id".into(), new_cell_id().into());
+        extra.insert("metadata".into(), Value::Object(Map::new()));
+        extra.insert("execution_count".into(), Value::Null);
+        Cell {
+            cell_type: "code".into(),
+            source: String::new(),
+            outputs: Some(Vec::new()),
+            extra,
+        }
+    }
+
     pub fn execution_count(&self) -> Option<i64> {
         self.extra.get("execution_count").and_then(Value::as_i64)
     }
@@ -104,6 +118,19 @@ fn cap_lines(s: String, max: usize) -> String {
 }
 
 impl Notebook {
+    /// A new notebook (path doesn't exist yet): one empty code cell. The
+    /// kernelspec metadata is filled in once a kernel is ready.
+    pub fn new_empty() -> Self {
+        let mut extra = Map::new();
+        extra.insert("metadata".into(), Value::Object(Map::new()));
+        extra.insert("nbformat".into(), 4.into());
+        extra.insert("nbformat_minor".into(), 5.into());
+        Notebook {
+            cells: vec![Cell::new_code()],
+            extra,
+        }
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
@@ -138,10 +165,20 @@ impl Notebook {
         // byte-identical to nbformat.write: sorted keys (serde_json::Map is a
         // BTreeMap; going through Value also sorts the typed Cell fields),
         // 1-space indent, trailing newline — no diff noise in git
+        let mut value = serde_json::to_value(self)?;
+        // `transient` (display_id routing) lives on outputs in memory only;
+        // nbformat's output schemas reject it
+        for cell in value["cells"].as_array_mut().into_iter().flatten() {
+            for output in cell["outputs"].as_array_mut().into_iter().flatten() {
+                if let Some(o) = output.as_object_mut() {
+                    o.remove("transient");
+                }
+            }
+        }
         let mut buf = Vec::new();
         let fmt = serde_json::ser::PrettyFormatter::with_indent(b" ");
         serde::Serialize::serialize(
-            &serde_json::to_value(self)?,
+            &value,
             &mut serde_json::Serializer::with_formatter(&mut buf, fmt),
         )?;
         let mut json = String::from_utf8(buf)?;
@@ -295,6 +332,19 @@ mod tests {
         let saved = std::fs::read_to_string(&path).unwrap();
         std::fs::remove_file(&path).ok();
         assert_eq!(saved, canonical);
+    }
+
+    #[test]
+    fn save_strips_in_memory_transient() {
+        let mut nb = Notebook::new_empty();
+        nb.cells[0].push_output(serde_json::json!({"output_type": "display_data", "data": {},
+            "metadata": {}, "transient": {"display_id": "d1"}}));
+        let path = std::env::temp_dir().join(format!("jotter-tr-{}.ipynb", std::process::id()));
+        nb.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert!(!saved.contains("transient"), "{saved}");
+        assert!(nb.cells[0].outputs.as_ref().unwrap()[0].get("transient").is_some());
     }
 
     #[test]

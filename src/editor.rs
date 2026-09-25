@@ -78,6 +78,20 @@ impl Editor {
         self.clamp();
     }
 
+    /// Replace chars [start, end) of the whole source (rows joined by '\n')
+    /// with `text`, cursor after it — kernel completions. One undo step.
+    pub fn replace_chars(&mut self, start: usize, end: usize, text: &str) {
+        self.snapshot();
+        let src = self.source();
+        let byte = |ci: usize| src.char_indices().nth(ci).map_or(src.len(), |(b, _)| b);
+        let new = format!("{}{text}{}", &src[..byte(start)], &src[byte(end.max(start))..]);
+        let caret: String = new.chars().take(start + text.chars().count()).collect();
+        self.lines = new.split('\n').map(String::from).collect();
+        let row = caret.matches('\n').count();
+        self.cursor = (row, clen(caret.rsplit('\n').next().unwrap_or("")));
+        self.clamp();
+    }
+
     fn line(&self) -> &str {
         &self.lines[self.cursor.0]
     }
@@ -415,6 +429,20 @@ mod tests {
         e.input(key('z'));
         e.input(code(KeyCode::Esc));
         assert_eq!(e.source(), "foo bar\nz");
+    }
+
+    #[test]
+    fn replace_chars_spans_rows_and_places_cursor() {
+        let mut e = Editor::new("import nu\nx");
+        e.input(key('A')); // insert mode at end of row 0
+        e.replace_chars(7, 9, "numpy");
+        assert_eq!(e.source(), "import numpy\nx");
+        assert_eq!(e.cursor, (0, 12));
+        e.replace_chars(13, 14, "yy"); // row 1
+        assert_eq!((e.source().as_str(), e.cursor), ("import numpy\nyy", (1, 2)));
+        e.input(code(KeyCode::Esc));
+        e.input(key('u'));
+        assert_eq!(e.source(), "import numpy\nx");
     }
 
     #[test]

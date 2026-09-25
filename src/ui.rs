@@ -20,6 +20,7 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const OUTPUT_STYLE: Style = Style::new().fg(Color::Gray);
 const ERROR_STYLE: Style = Style::new().fg(Color::Red);
@@ -44,10 +45,124 @@ pub struct InlineImage {
     proto: SlicedProtocol,
 }
 
+/// Where a wrapped screen row comes from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RowOrigin {
+    /// Logical line index.
+    pub line: usize,
+    /// Char index of the row's first char within that line.
+    pub col: usize,
+    /// Display column of the row's first char within that line.
+    pub x: usize,
+}
+
+/// Logical lines soft-wrapped to a width: the screen rows.
+#[derive(Default)]
+pub struct Wrapped {
+    /// Width this was wrapped for (0 = unwrapped).
+    width: u16,
+    pub rows: Vec<Line<'static>>,
+    pub origin: Vec<RowOrigin>,
+    /// Logical line -> its first row (len = lines + 1; last = rows.len()).
+    first_row: Vec<usize>,
+}
+
+impl Wrapped {
+    /// Row + in-row display column of display column `x` on logical `line`.
+    fn locate(&self, line: usize, x: usize) -> (usize, usize) {
+        let (a, b) = (self.first_row[line], self.first_row[line + 1].max(self.first_row[line] + 1));
+        let r = (a..b.min(self.origin.len()))
+            .rev()
+            .find(|&r| self.origin[r].x <= x)
+            .unwrap_or(a);
+        (r, x - self.origin.get(r).map_or(0, |o| o.x))
+    }
+
+    /// Row holding char `col` of logical `line`, and that row's first char.
+    fn row_of_char(&self, line: usize, col: usize) -> (usize, usize) {
+        let (a, b) = (self.first_row[line], self.first_row[line + 1]);
+        let r = (a..b).rev().find(|&r| self.origin[r].col <= col).unwrap_or(a);
+        (r, self.origin.get(r).map_or(0, |o| o.col))
+    }
+}
+
+/// Soft-wrap `lines` to `width` display columns (0 = no wrapping). Greedy
+/// word wrap that breaks only at ASCII spaces — NBSP never breaks, which
+/// keeps inline-math reservations whole — and hard-breaks words longer than
+/// a row. Spaces at a break stay at the end of the upper row (clipped if they
+/// overflow), so char columns map 1:1 onto rows.
+pub fn wrap_lines(lines: &[Line<'static>], width: u16) -> Wrapped {
+    let w = width as usize;
+    let mut out = Wrapped {
+        width,
+        ..Default::default()
+    };
+    for (li, line) in lines.iter().enumerate() {
+        out.first_row.push(out.rows.len());
+        if w == 0 || line.width() <= w {
+            out.rows.push(line.clone());
+            out.origin.push(RowOrigin { line: li, col: 0, x: 0 });
+            continue;
+        }
+        let chars: Vec<(char, Style)> = line
+            .spans
+            .iter()
+            .flat_map(|s| s.content.chars().map(move |c| (c, s.style)))
+            .collect();
+        let cw: Vec<usize> = chars.iter().map(|(c, _)| c.width().unwrap_or(0)).collect();
+        let mut starts = vec![0usize];
+        let (mut row_w, mut i) = (0usize, 0usize);
+        while i < chars.len() {
+            if chars[i].0 == ' ' {
+                row_w += cw[i];
+                i += 1;
+                continue;
+            }
+            let j = i + chars[i..].iter().position(|(c, _)| *c == ' ').unwrap_or(chars.len() - i);
+            let word: usize = cw[i..j].iter().sum();
+            if row_w + word <= w {
+                row_w += word;
+            } else if row_w > 0 && word <= w {
+                starts.push(i);
+                row_w = word;
+            } else {
+                for (k, &c) in cw.iter().enumerate().take(j).skip(i) {
+                    if row_w + c > w && row_w > 0 {
+                        starts.push(k);
+                        row_w = 0;
+                    }
+                    row_w += c;
+                }
+            }
+            i = j;
+        }
+        starts.push(chars.len());
+        for pair in starts.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            for &(c, st) in &chars[a..b] {
+                match spans.last_mut() {
+                    Some(sp) if sp.style == st => sp.content.to_mut().push(c),
+                    _ => spans.push(Span::styled(c.to_string(), st)),
+                }
+            }
+            out.rows.push(Line::from(spans).style(line.style));
+            out.origin.push(RowOrigin {
+                line: li,
+                col: a,
+                x: cw[..a].iter().sum(),
+            });
+        }
+    }
+    out.first_row.push(out.rows.len());
+    out
+}
+
 pub struct CellBlock {
-    pub lines: Vec<Line<'static>>,
+    /// Logical (unwrapped) lines; images and `src_map` index into these.
+    lines: Vec<Line<'static>>,
     /// How many of `lines` are source (the rest are outputs).
-    pub src_lines: usize,
+    src_lines: usize,
     images: Vec<InlineImage>,
     /// Rendered source row -> raw source line (markdown cells; empty = 1:1).
     src_map: Vec<usize>,
@@ -59,11 +174,46 @@ pub struct CellBlock {
     pub full_images: bool,
     /// Wall time of the cell's last completed execution (session-only).
     pub elapsed: Option<std::time::Duration>,
+    /// `lines` wrapped to the body width: what is actually displayed.
+    wrap: Wrapped,
 }
 
 impl CellBlock {
+    /// Re-wrap for `width` (no-op when already wrapped for it).
+    /// Re-wrap for body `width`: source rows lose the gutter's columns,
+    /// outputs use the full width. No-op when already wrapped for it.
+    fn rewrap(&mut self, width: u16) {
+        if self.wrap.width != width || self.wrap.first_row.len() != self.lines.len() + 1 {
+            let src_w = if width == 0 { 0 } else { width.saturating_sub(GUTTER).max(1) };
+            let (src, out) = self.lines.split_at(self.src_lines);
+            let mut w = wrap_lines(src, src_w);
+            let o = wrap_lines(out, width);
+            let base_row = w.rows.len();
+            w.first_row.pop(); // the source end sentinel == first output row
+            w.first_row.extend(o.first_row.iter().map(|r| r + base_row));
+            w.rows.extend(o.rows);
+            w.origin.extend(o.origin.into_iter().map(|r| RowOrigin {
+                line: r.line + self.src_lines,
+                ..r
+            }));
+            w.width = width;
+            self.wrap = w;
+        }
+    }
+
+    /// Displayed source rows.
+    pub fn src_rows(&self) -> usize {
+        self.wrap.first_row[self.src_lines]
+    }
+
+    /// Displayed output rows (the viewport works in these).
     fn out_len(&self) -> usize {
-        self.lines.len() - self.src_lines
+        self.wrap.rows.len() - self.src_rows()
+    }
+
+    /// Top-left of an image in (block row, display column).
+    fn image_pos(&self, img: &InlineImage) -> (usize, usize) {
+        self.wrap.locate(img.line, img.col as usize)
     }
 
     /// Output-viewport budget: the row cap is for *text* spam — images are
@@ -75,7 +225,7 @@ impl CellBlock {
             .iter()
             .filter(|i| i.line >= self.src_lines)
             .map(|i| i.rows as usize)
-            .sum();
+            .sum(); // placeholder lines are empty: one row each, never wrapped
         max_output_rows() + image_rows
     }
 
@@ -121,12 +271,13 @@ impl CellBlock {
             self.out_scroll.to_string()
         };
         format!(
-            "src {} · out {} (cap {}) · out_scroll {follow} → win {} · images {}{}{}",
-            self.src_lines,
+            "src {} rows · out {} rows (cap {}) · out_scroll {follow} → win {} · images {} · wrap {}{}{}",
+            self.src_rows(),
             self.out_len(),
             self.out_cap(),
             self.win_start(),
             self.images.len(),
+            self.wrap.width,
             if self.collapsed { " · collapsed" } else { "" },
             if self.full_images { " · native-size" } else { "" },
         )
@@ -139,15 +290,22 @@ pub struct Rendered {
     picker: Option<Picker>,
     /// Notebook directory: markdown image paths resolve relative to it.
     dir: std::path::PathBuf,
+    /// Code-cell language (syntect token: "python", "r", ...), from the
+    /// notebook's language_info / kernelspec metadata.
+    lang: String,
+    /// Body width blocks are wrapped to (0 until the first draw).
+    width: u16,
     pub blocks: Vec<CellBlock>,
 }
 
-fn cell_ext(cell: &Cell) -> &'static str {
-    match cell.cell_type.as_str() {
-        "code" => "py",
-        "markdown" => "md",
-        _ => "txt",
-    }
+/// Kernel language recorded in the notebook: language_info.name (written by
+/// jupyter from the kernel), else kernelspec.language, else python.
+pub fn notebook_language(nb: &Notebook) -> String {
+    let meta = nb.extra.get("metadata");
+    let get = |a: &str, b: &str| meta?.get(a)?.get(b)?.as_str().map(str::to_lowercase);
+    get("language_info", "name")
+        .or_else(|| get("kernelspec", "language"))
+        .unwrap_or_else(|| "python".into())
 }
 
 /// Raw cell destined for latex (nbconvert convention: metadata.format mime).
@@ -174,10 +332,48 @@ impl Rendered {
             theme,
             picker,
             dir,
+            lang: notebook_language(nb),
+            width: 0,
             blocks: Vec::new(),
         };
         r.blocks = nb.cells.iter().map(|c| r.render_cell(c, false)).collect();
         r
+    }
+
+    /// Wrap every block to `width`; only blocks wrapped for another width do
+    /// work, so steady-state frames pay nothing.
+    pub fn relayout(&mut self, width: u16) {
+        self.width = width;
+        for b in &mut self.blocks {
+            b.rewrap(width);
+        }
+    }
+
+    /// Kernel language became known (new notebook): affects later renders.
+    pub fn set_language(&mut self, lang: &str) {
+        self.lang = lang.to_lowercase();
+    }
+
+    /// Highlighting token for a cell's source.
+    fn cell_lang(&self, cell: &Cell) -> &str {
+        match cell.cell_type.as_str() {
+            "code" => &self.lang,
+            "markdown" => "md",
+            _ => "txt",
+        }
+    }
+
+    /// File extension for the `E` external-edit temp file of `cell`, so
+    /// $EDITOR picks the right filetype ("py", "R", "jl", ...).
+    pub fn edit_suffix(&self, cell: &Cell) -> String {
+        let token = self.cell_lang(cell);
+        self.ps
+            .find_syntax_by_token(token)
+            .and_then(|s| s.file_extensions.first().cloned())
+            .unwrap_or_else(|| match cell.cell_type.as_str() {
+                "code" => token.to_string(),
+                _ => "txt".into(),
+            })
     }
 
     pub fn rebuild_cell(&mut self, idx: usize, cell: &Cell) {
@@ -261,10 +457,10 @@ impl Rendered {
                     .highlight_line(line, &self.ps)
                     .unwrap_or_default()
                     .into_iter()
-                    .map(|(st, txt)| {
+                    .flat_map(|(st, txt)| {
                         let fg = st.foreground;
-                        Span::styled(
-                            txt.trim_end_matches('\n').to_string(),
+                        show_tabs(
+                            txt.trim_end_matches('\n'),
                             Style::default().fg(Color::Rgb(fg.r, fg.g, fg.b)),
                         )
                     })
@@ -284,7 +480,7 @@ impl Rendered {
             (l, im, Vec::new())
         } else {
             (
-                self.highlight(&cell.source, cell_ext(cell)),
+                self.highlight(&cell.source, self.cell_lang(cell)),
                 Vec::new(),
                 Vec::new(),
             )
@@ -308,7 +504,7 @@ impl Rendered {
                 lines.extend(output_lines(output));
             }
         }
-        CellBlock {
+        let mut block = CellBlock {
             lines,
             src_lines,
             images,
@@ -317,7 +513,10 @@ impl Rendered {
             collapsed: false,
             full_images,
             elapsed: None,
-        }
+            wrap: Wrapped::default(),
+        };
+        block.rewrap(self.width);
+        block
     }
 
     /// Reserve blank lines for `entry` at the current position and record it.
@@ -476,7 +675,7 @@ impl Rendered {
             let t = raw.trim();
             if let Some((lang, buf)) = &mut fence {
                 if t.starts_with("```") {
-                    let lang = if lang.is_empty() { "py" } else { lang.as_str() };
+                    let lang = if lang.is_empty() { self.lang.as_str() } else { lang.as_str() };
                     let body = self.highlight(buf, lang);
                     src_map.extend(i - body.len()..i); // fence body maps 1:1
                     lines.extend(body);
@@ -611,8 +810,9 @@ impl Rendered {
             .add_modifier(Modifier::UNDERLINED);
         let url_style = Style::new().fg(Color::DarkGray);
         let mut spans: Vec<Span<'static>> = Vec::new();
-        let mut col = 0usize; // ponytail: chars == columns; wide chars drift, fix with unicode-width if it bites
+        let mut col = 0usize; // display column (unicode width)
         let mut text = String::new();
+        let raw = &raw.replace('\t', "    "); // rendered prose: tabs as spaces
         let rest = match raw
             .trim_start()
             .strip_prefix("- ")
@@ -628,7 +828,7 @@ impl Rendered {
         };
         let flush = |text: &mut String, spans: &mut Vec<Span<'static>>, col: &mut usize| {
             if !text.is_empty() {
-                *col += text.chars().count();
+                *col += text.width();
                 spans.push(Span::raw(std::mem::take(text)));
             }
         };
@@ -638,7 +838,7 @@ impl Rendered {
                            spans: &mut Vec<Span<'static>>,
                            col: &mut usize| {
             flush(text, spans, col);
-            *col += s.chars().count();
+            *col += s.width();
             spans.push(Span::styled(s, style));
         };
         let mut chars = rest.chars().peekable();
@@ -674,8 +874,9 @@ impl Rendered {
                                 self.image_entry(image::DynamicImage::ImageRgba8(img), false)
                             });
                         if let Some(entry) = entry {
-                            // reserve the columns in the text flow
-                            spans.push(Span::raw(" ".repeat(entry.cols as usize)));
+                            // reserve the columns in the text flow; NBSP so
+                            // soft wrapping never splits the equation
+                            spans.push(Span::raw("\u{a0}".repeat(entry.cols as usize)));
                             images.push(InlineImage {
                                 line: line_idx,
                                 col: col as u16,
@@ -690,7 +891,7 @@ impl Rendered {
                     } else {
                         (inner, code_style)
                     };
-                    col += shown.chars().count();
+                    col += shown.width();
                     spans.push(Span::styled(shown, style));
                 }
                 '*' => {
@@ -770,6 +971,63 @@ impl Rendered {
         flush(&mut text, &mut spans, &mut col);
         Line::from(spans)
     }
+}
+
+/// Source text as spans, with each tab shown as a dim `→` (one column, so
+/// char columns still map 1:1 onto the editor cursor). ratatui draws a raw
+/// `\t` as zero width: a stray tab would be invisible — and in Python, an
+/// IndentationError nobody can see.
+fn show_tabs(text: &str, style: Style) -> Vec<Span<'static>> {
+    if !text.contains('\t') {
+        return vec![Span::styled(text.to_string(), style)];
+    }
+    let tab = Style::new().fg(Color::DarkGray);
+    let mut out = Vec::new();
+    for (i, part) in text.split('\t').enumerate() {
+        if i > 0 {
+            out.push(Span::styled("→", tab));
+        }
+        if !part.is_empty() {
+            out.push(Span::styled(part.to_string(), style));
+        }
+    }
+    out
+}
+
+/// Expand tabs in output text to 8-column stops (terminal semantics),
+/// skipping ANSI escape sequences when counting columns.
+fn expand_tabs(text: &str) -> String {
+    if !text.contains('\t') {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len() + 16);
+    let (mut col, mut in_esc) = (0usize, false);
+    for c in text.chars() {
+        match c {
+            '\t' => {
+                let n = 8 - col % 8;
+                out.extend(std::iter::repeat_n(' ', n));
+                col += n;
+            }
+            '\n' => {
+                out.push(c);
+                col = 0;
+            }
+            '\x1b' => {
+                out.push(c);
+                in_esc = true;
+            }
+            _ if in_esc => {
+                out.push(c);
+                in_esc = !c.is_ascii_alphabetic(); // CSI ends at its final letter
+            }
+            _ => {
+                out.push(c);
+                col += c.width().unwrap_or(0);
+            }
+        }
+    }
+    out
 }
 
 /// After a consumed `[`, take `label](url)`. Err carries the literal text to
@@ -905,7 +1163,7 @@ fn output_lines(output: &Value) -> Vec<Line<'static>> {
         _ => return vec![],
     };
     // any remaining \r is a pending-overwrite marker from stream collapsing
-    let text = text.replace('\r', "");
+    let text = expand_tabs(&text.replace('\r', ""));
     match text.into_text() {
         Ok(t) => t
             .lines
@@ -925,47 +1183,83 @@ fn output_lines(output: &Value) -> Vec<Line<'static>> {
     }
 }
 
+/// Columns of the left gutter bar on source rows (`▌ `).
+pub const GUTTER: u16 = 2;
+
+/// Cell-type accent: code cyan, markdown magenta, raw yellow.
+fn type_color(cell: &Cell) -> Color {
+    match cell.cell_type.as_str() {
+        "code" => Color::Cyan,
+        "markdown" => Color::Magenta,
+        _ => Color::Yellow,
+    }
+}
+
+/// The gutter bar: bright on the selected cell, dimmed elsewhere. Every
+/// modifier a markdown heading line carries is masked off.
+fn gutter_span(cell: &Cell, selected: bool) -> Span<'static> {
+    let style = Style::new()
+        .fg(type_color(cell))
+        .remove_modifier(Modifier::all());
+    let style = if selected {
+        style.add_modifier(Modifier::BOLD)
+    } else {
+        style.add_modifier(Modifier::DIM)
+    };
+    Span::styled("▌ ", style)
+}
+
+/// Cell header: gutter, label (`In [3]`, `markdown`, ...), edit marker,
+/// timing, then a rule to the right edge so cells read as separate blocks.
 /// `run`: None = idle, Some(false) = queued, Some(true) = executing.
-fn prompt_line(
+fn header_line(
     cell: &Cell,
     selected: bool,
     run: Option<bool>,
     editing: bool,
     elapsed: Option<std::time::Duration>,
+    width: u16,
 ) -> Line<'static> {
     let label = match cell.cell_type.as_str() {
         "code" => match run {
-            Some(true) => "In [*]:".to_string(),
-            Some(false) => "In [·]:".to_string(),
+            Some(true) => "In [*]".to_string(),
+            Some(false) => "In [·]".to_string(),
             None => match cell.execution_count() {
-                Some(n) => format!("In [{n}]:"),
-                None => "In [ ]:".to_string(),
+                Some(n) => format!("In [{n}]"),
+                None => "In [ ]".to_string(),
             },
         },
-        other => format!("[{other}]"),
+        "raw" if is_latex_raw(cell) => "latex".to_string(),
+        other => other.to_string(),
     };
-    let mut style = Style::default()
-        .fg(if cell.cell_type == "code" {
-            Color::Cyan
-        } else {
-            Color::Magenta
-        })
-        .add_modifier(Modifier::BOLD);
-    let marker = if selected {
-        style = style.add_modifier(Modifier::REVERSED);
-        if editing { "✎ " } else { "▶ " }
+    let color = type_color(cell);
+    let mut label_style = Style::new().fg(color).add_modifier(Modifier::BOLD);
+    if selected {
+        label_style = label_style.add_modifier(Modifier::REVERSED);
+    }
+    let rule = if selected {
+        Style::new().fg(color)
     } else {
-        "  "
+        Style::new().fg(Color::DarkGray)
     };
-    let mut spans = vec![Span::raw(marker), Span::styled(label, style)];
+    let mut spans = vec![
+        gutter_span(cell, selected),
+        Span::styled(format!(" {label} "), label_style),
+    ];
+    if editing {
+        spans.push(Span::styled(" ✎", Style::new().fg(color)));
+    }
     if run.is_none()
         && let Some(d) = elapsed
     {
         spans.push(Span::styled(
-            format!(" {}", fmt_duration(d)),
+            format!(" · {}", fmt_duration(d)),
             Style::new().fg(Color::DarkGray),
         ));
     }
+    let used: usize = spans.iter().map(Span::width).sum();
+    let fill = (width as usize).saturating_sub(used + 1);
+    spans.push(Span::styled(format!(" {}", "─".repeat(fill)), rule));
     Line::from(spans)
 }
 
@@ -993,17 +1287,43 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
     let height = body.height as usize;
 
-    // The editing cell renders live from the editor buffer, highlighted once
-    // per frame; editor.lines is authoritative for its displayed row count.
+    rendered.relayout(body.width);
+
+    // The editing cell renders live from the editor buffer: highlighted and
+    // wrapped once per frame (one cell; cached blocks rewrap only on resize).
+    // The editor's line count is authoritative for its logical lines.
     let editing_cell = app.editor.as_ref().map(|_| app.selected);
-    let editor_lines: Vec<Line> = match (&app.editor, app.notebook.cells.get(app.selected)) {
-        (Some(ed), Some(cell)) => rendered.highlight(&ed.source(), cell_ext(cell)),
-        _ => Vec::new(),
+    let editor_src = app.editor.as_ref().map(|e| e.source()).unwrap_or_default();
+    let editor_wrap = match (&app.editor, app.notebook.cells.get(app.selected)) {
+        (Some(ed), Some(cell)) => {
+            let mut logical = rendered.highlight(&editor_src, rendered.cell_lang(cell));
+            logical.resize(ed.line_count().max(1), Line::raw(""));
+            // visual-mode selection (nvim backend) overlays the highlighting
+            if let Some((kind, anchor, cursor)) = ed.visual() {
+                for (row, l) in logical.iter_mut().enumerate() {
+                    if let Some((from, to)) = sel_range(kind, anchor, cursor, row, line_chars(l)) {
+                        overlay_reversed(l, from, to);
+                    }
+                }
+            }
+            wrap_lines(&logical, body.width.saturating_sub(GUTTER).max(1))
+        }
+        _ => Wrapped::default(),
     };
-    let editor_rows = app.editor.as_ref().map_or(0, |e| e.line_count());
-    // visual-mode selection (nvim backend), applied as an overlay on the
-    // highlighted source spans of the editing cell
-    let visual = app.editor.as_ref().and_then(|e| e.visual());
+    // editor cursor as (wrapped row within the cell, display column)
+    let editor_cursor = app.editor.as_ref().and_then(|ed| {
+        let (crow, ccol) = ed.cursor();
+        let crow = crow.min(editor_wrap.first_row.len().checked_sub(2)?);
+        let (row, col0) = editor_wrap.row_of_char(crow, ccol);
+        let line = editor_src.split('\n').nth(crow).unwrap_or("");
+        let x: usize = line
+            .chars()
+            .skip(col0)
+            .take(ccol.saturating_sub(col0))
+            .map(|c| if c == '\t' { 1 } else { c.width().unwrap_or(0) }) // show_tabs: `→`
+            .sum();
+        Some((row, x))
+    });
 
     // Layout pass: per-cell displayed shape and start lines — no clones.
     // Body = source rows + a window onto the output (+ footer when clipped).
@@ -1022,9 +1342,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     let view = |i: usize| -> CellView {
         let block = &rendered.blocks[i];
         let src = if editing_cell == Some(i) {
-            editor_rows
+            editor_wrap.rows.len()
         } else {
-            block.src_lines
+            block.src_rows()
         };
         let (win_start, win_rows, footer) = block.window();
         CellView {
@@ -1048,8 +1368,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     // unless the user wheel-scrolled away; then only clamp to the content.
     if app.manual_scroll || starts.is_empty() {
         app.scroll = app.scroll.min(total.saturating_sub(1));
-    } else if let Some(editor) = &app.editor {
-        let cur = starts[app.selected] + 1 + editor.cursor().0;
+    } else if let Some((row, _)) = editor_cursor {
+        let cur = starts[app.selected] + 1 + row;
         if cur >= app.scroll + height {
             app.scroll = cur + 1 - height;
         }
@@ -1090,37 +1410,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
                 .iter()
                 .find_map(|(m, &c)| (c == ci).then(|| app.started.contains_key(m)));
             (
-                prompt_line(cell, ci == app.selected, run, editing, block.elapsed),
+                header_line(cell, ci == app.selected, run, editing, block.elapsed, body.width),
                 HitKind::Other,
             )
         } else if local <= v.src {
             let b = local - 1;
-            let line = if editing {
-                let mut l = editor_lines
-                    .get(b)
-                    .cloned()
-                    .unwrap_or_else(|| Line::raw(""));
-                if let Some((kind, anchor, cursor)) = visual
-                    && let Some((from, to)) = sel_range(kind, anchor, cursor, b, line_chars(&l))
-                {
-                    overlay_reversed(&mut l, from, to);
-                }
-                l
-            } else {
-                block.lines[b].clone()
-            };
+            let wrap = if editing { &editor_wrap } else { &block.wrap };
+            let o = wrap.origin[b];
             let kind = if editing || (cell.cell_type != "markdown" && !is_latex_raw(cell)) {
-                HitKind::Source(b)
-            } else if let Some(&s) = block.src_map.get(b) {
-                HitKind::Source(s) // rendered markdown row -> raw source line
+                HitKind::Source {
+                    line: o.line,
+                    col: o.col,
+                }
+            } else if let Some(&s) = block.src_map.get(o.line) {
+                // rendered markdown row -> raw source line
+                HitKind::Source { line: s, col: 0 }
             } else {
                 HitKind::Other // latex raw: no per-row mapping
             };
-            (line, kind)
+            let mut row = wrap.rows[b].clone();
+            row.spans.insert(0, gutter_span(cell, ci == app.selected));
+            (row, kind)
         } else if local <= v.src + v.win_rows {
             let out_row = v.win_start + (local - 1 - v.src);
             (
-                block.lines[block.src_lines + out_row].clone(),
+                block.wrap.rows[block.src_rows() + out_row].clone(),
                 HitKind::Output,
             )
         } else if v.footer && local == 1 + v.src + v.win_rows {
@@ -1165,25 +1479,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
             if in_src && editing {
                 continue;
             }
-            if img.col >= body.width {
+            let (row, x) = block.image_pos(img);
+            if x >= body.width as usize {
                 continue;
             }
             let (area, pos) = if in_src {
                 // source images: straight mapping, clipped by the viewport
-                let rel = starts[i] as isize + 1 + img.line as isize - app.scroll as isize;
+                let rel = starts[i] as isize + 1 + row as isize - app.scroll as isize;
                 if rel + (img.rows as isize) <= 0 || rel >= body.height as isize {
                     continue;
                 }
                 (
                     body,
                     SignedPosition {
-                        x: img.col as i16,
+                        x: (x as u16 + GUTTER) as i16,
                         y: rel as i16,
                     },
                 )
             } else {
                 // output images: clipped by the output window, then the viewport
-                let ol = img.line - block.src_lines;
+                let ol = row - block.src_rows();
                 if ol + img.rows as usize <= v.win_start || ol >= v.win_start + v.win_rows {
                     continue;
                 }
@@ -1203,7 +1518,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
                 (
                     area,
                     SignedPosition {
-                        x: img.col as i16,
+                        x: x as i16,
                         y: (img_rel - y0) as i16,
                     },
                 )
@@ -1213,14 +1528,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     }
 
     // Editor cursor: real terminal cursor at the edit position.
-    if let Some(editor) = &app.editor {
-        let (crow, ccol) = editor.cursor();
-        let abs = starts[app.selected] + 1 + crow;
+    let mut cursor_at = None;
+    if let Some((row, x)) = editor_cursor {
+        let abs = starts[app.selected] + 1 + row;
         if abs >= app.scroll && ((abs - app.scroll) as u16) < body.height {
-            frame.set_cursor_position((
-                body.x + (ccol as u16).min(body.width.saturating_sub(1)),
+            let pos = (
+                body.x + (x as u16 + GUTTER).min(body.width.saturating_sub(1)),
                 body.y + (abs - app.scroll) as u16,
-            ));
+            );
+            frame.set_cursor_position(pos);
+            cursor_at = Some(pos);
         }
     }
 
@@ -1242,11 +1559,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     } else {
         Span::styled("○ idle", Style::new().fg(Color::Green))
     };
-    // rightmost slot: search prompt, then nvim's cmdline, then the message
-    let tail = if let Some(q) = &app.search_input {
-        format!("/{q}▏")
+    // rightmost slot: prompt input, nvim's cmdline, a pending question, then
+    // the message
+    let tail = if let Some(p) = &app.prompt {
+        match p.kind {
+            crate::app::PromptKind::Search => format!("/{}▏", p.buf),
+            crate::app::PromptKind::SaveAs => format!("save as: {}▏", p.buf),
+        }
     } else if let Some(c) = app.editor.as_ref().and_then(|e| e.cmdline()) {
         format!("{c}▏")
+    } else if let Some(q) = &app.confirm {
+        q.question()
     } else {
         app.message.clone().unwrap_or_default()
     };
@@ -1281,6 +1604,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         };
         frame.render_widget(SlicedImage::new(proto, pos), body);
     }
+    // the completion popup belongs to the text; overlays (docs pager, help,
+    // logs, ...) draw over it
+    if let (Some(c), Some(at)) = (&mut app.completion, cursor_at)
+        && !c.items.is_empty()
+    {
+        // align the popup's text with the token start (the live completer's
+        // `.attr` matches display without the dot)
+        let (start, end) = c.span();
+        let typed: String = editor_src.chars().skip(start).take(end.saturating_sub(start)).collect();
+        let typed_w = typed.trim_start_matches('.').width() as u16;
+        draw_completion(frame, c, at, typed_w, body, &rendered.panel());
+    }
     if app.show_help {
         draw_help(frame);
     }
@@ -1289,6 +1624,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     }
     if let Some(text) = &app.debug {
         draw_debug(frame, text);
+    }
+    if let Some(pager) = &mut app.pager {
+        draw_pager(frame, pager);
     }
     if let Some(req) = &app.stdin_req {
         draw_stdin(frame, req);
@@ -1376,11 +1714,13 @@ fn modal(frame: &mut Frame, area: Rect, title: &str, hint: &str) -> Rect {
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(dim)
-        .padding(Padding::horizontal(1))
-        .title(Span::styled(
+        .padding(Padding::horizontal(1));
+    if !title.is_empty() {
+        block = block.title(Span::styled(
             format!(" {title} "),
             Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ));
+    }
     if !hint.is_empty() {
         block = block.title_bottom(Line::styled(format!(" {hint} "), dim).right_aligned());
     }
@@ -1476,6 +1816,189 @@ fn draw_logs(frame: &mut Frame, up: &mut usize) {
     }
 }
 
+/// Popup palette derived from the syntax theme's background: a panel a
+/// step lighter (darker on light themes), a brighter selection row, and the
+/// scrollbar thumb.
+pub struct Panel {
+    bg: Color,
+    sel: Color,
+    thumb: Color,
+}
+
+impl Rendered {
+    pub fn panel(&self) -> Panel {
+        let base = self
+            .theme
+            .settings
+            .background
+            .map_or((0x2b, 0x30, 0x3b), |c| (c.r, c.g, c.b));
+        let light = (base.0 as u32 * 299 + base.1 as u32 * 587 + base.2 as u32 * 114) / 1000 > 128;
+        let target = if light { 0.0 } else { 255.0 };
+        let mix = |t: f32| {
+            let m = |c: u8| (c as f32 + (target - c as f32) * t) as u8;
+            Color::Rgb(m(base.0), m(base.1), m(base.2))
+        };
+        Panel {
+            bg: mix(0.08),
+            sel: mix(0.20),
+            thumb: mix(0.35),
+        }
+    }
+}
+
+/// Completion popup height (rows); the app resolves this many at a time.
+pub const COMPLETION_ROWS: usize = 12;
+
+/// Completion kinds as the popup shows them, with their color.
+fn kind_label(kind: &str) -> (&'static str, Color) {
+    match kind {
+        "function" | "method" => ("Function", Color::Green),
+        "class" => ("Class", Color::Yellow),
+        "module" => ("Module", Color::Cyan),
+        "keyword" => ("Keyword", Color::Magenta),
+        "property" => ("Property", Color::Blue),
+        "instance" | "statement" | "param" => ("Variable", Color::Blue),
+        // the live completer's generic kinds: blank until resolved (showing
+        // "Variable" and flipping to "Function" a moment later would lie)
+        "attribute" | "variable" => ("", Color::DarkGray),
+        "path" => ("Path", Color::DarkGray),
+        "magic" => ("Magic", Color::Magenta),
+        "word" => ("Text", Color::DarkGray),
+        _ => ("", Color::DarkGray),
+    }
+}
+
+/// Keep `sel` inside a `shown`-row window starting at `top`, moving the
+/// window only when the selection leaves it (no jumping on every step).
+pub fn scroll_window(top: usize, sel: usize, shown: usize, len: usize) -> usize {
+    let top = if sel < top {
+        sel
+    } else if sel >= top + shown {
+        sel + 1 - shown
+    } else {
+        top
+    };
+    top.min(len.saturating_sub(shown))
+}
+
+/// `s` cut to `w` display columns, with `…` when shortened.
+fn fit(s: &str, w: usize) -> String {
+    if s.width() <= w {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for c in s.chars() {
+        let cw = c.width().unwrap_or(0);
+        if used + cw + 1 > w {
+            break;
+        }
+        out.push(c);
+        used += cw;
+    }
+    out.push('…');
+    out
+}
+
+/// Completion popup (nvim-cmp style): a borderless panel under the cursor
+/// (above it when there's no room), text column aligned with the token
+/// being completed, columns name · kind · signature, and a scrollbar.
+/// `typed_w`: display width typed since the token start.
+fn draw_completion(
+    frame: &mut Frame,
+    c: &mut crate::app::Completion,
+    (cx, cy): (u16, u16),
+    typed_w: u16,
+    body: Rect,
+    panel: &Panel,
+) {
+    const MAX_NAME: usize = 36;
+    let below = (body.y + body.height).saturating_sub(cy + 1) as usize;
+    let above = cy.saturating_sub(body.y) as usize;
+    let room = below.max(above);
+    let shown = c.items.len().min(COMPLETION_ROWS).min(room);
+    if shown == 0 {
+        return;
+    }
+    c.top = scroll_window(c.top, c.sel, shown, c.items.len());
+    let scrollbar = c.items.len() > shown;
+    // column widths over all items (stable while scrolling)
+    let name_w = c.items.iter().map(|i| i.label().width()).max().unwrap_or(0).min(MAX_NAME);
+    let kind_w = c.items.iter().map(|i| kind_label(&i.kind).0.len()).max().unwrap_or(0);
+    let detail_w = c.items.iter().map(|i| i.detail.width()).max().unwrap_or(0);
+    let fixed = 1 + name_w + 2 + kind_w + if detail_w > 0 { 2 } else { 0 } + 1 + scrollbar as usize;
+    let width = (fixed + detail_w).min(body.width as usize) as u16;
+    let detail_room = (width as usize).saturating_sub(fixed);
+    let x = cx
+        .saturating_sub(typed_w + 1)
+        .max(body.x)
+        .min(body.x + body.width.saturating_sub(width));
+    let y = if below >= shown { cy + 1 } else { cy - shown as u16 };
+    let area = Rect { x, y, width, height: shown as u16 };
+    frame.render_widget(ratatui::widgets::Clear, area);
+    let thumb = if scrollbar {
+        let len = ((shown * shown) / c.items.len()).max(1);
+        let pos = (c.top * shown) / c.items.len();
+        pos.min(shown - len)..pos.min(shown - len) + len
+    } else {
+        0..0
+    };
+    let lines: Vec<Line> = (0..shown)
+        .map(|row| {
+            let i = c.top + row;
+            let item = &c.items[i];
+            let bg = if i == c.sel { panel.sel } else { panel.bg };
+            let base = Style::new().bg(bg);
+            let (kind, kind_color) = kind_label(&item.kind);
+            let name = fit(item.label(), name_w);
+            let mut spans = vec![
+                Span::styled(" ", base),
+                Span::styled(
+                    format!("{name:<name_w$}"),
+                    if i == c.sel { base.add_modifier(Modifier::BOLD) } else { base },
+                ),
+                Span::styled(format!("  {kind:<kind_w$}"), base.fg(kind_color)),
+            ];
+            if detail_w > 0 {
+                let d = fit(&item.detail, detail_room);
+                spans.push(Span::styled(format!("  {d:<detail_room$}"), base.fg(Color::DarkGray)));
+            }
+            spans.push(Span::styled(" ", base));
+            if scrollbar {
+                let bar = if thumb.contains(&row) { panel.thumb } else { panel.bg };
+                spans.push(Span::styled(" ", Style::new().bg(bar)));
+            }
+            Line::from(spans)
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// Shift+Tab docs: scrollable (ANSI-colored) text; `top` clamped here.
+fn draw_pager(frame: &mut Frame, pager: &mut crate::app::Pager) {
+    let area = frame.area();
+    let panel = centered(
+        area,
+        area.width.saturating_sub(4).clamp(40, 110),
+        area.height.saturating_sub(2),
+    );
+    let text = pager
+        .text
+        .into_text()
+        .unwrap_or_else(|_| Text::raw(pager.text.clone()));
+    let rows = panel.height.saturating_sub(2) as usize;
+    let total = text.lines.len();
+    pager.top = pager.top.min(total.saturating_sub(rows));
+    let title = if total > rows {
+        format!("{} · {}–{} of {total}", pager.title, pager.top + 1, (pager.top + rows).min(total))
+    } else {
+        pager.title.clone()
+    };
+    let inner = modal(frame, panel, &title, "j/k PgUp/PgDn g/G scroll · any other key closes");
+    let lines: Vec<Line> = text.lines.into_iter().skip(pager.top).take(rows).collect();
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
 /// `D`: debug facts about the selected cell (already on the clipboard).
 fn draw_debug(frame: &mut Frame, text: &str) {
     let lines: Vec<Line> = text
@@ -1516,39 +2039,44 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
-        "Inside the builtin editor",
+        "Inside the editor",
         &[
-            ("h j k l w b e", "move (also 0 $ ^ gg G)"),
-            ("i a I A o O", "insert"),
-            ("x D dd yy p P", "delete / yank / put"),
-            ("u Ctrl+r", "undo / redo"),
+            ("Tab", "complete (opens by itself after `.`)"),
+            ("Shift+Tab", "docs (cursor name / highlighted item)"),
+            ("Tab ↓ ↑ Enter", "completion: next / prev / accept"),
+            ("Ctrl+\\", "split the cell at the cursor"),
+            ("h j k l w b e", "builtin: move (also 0 $ ^ gg G)"),
+            ("i a I A o O", "builtin: insert"),
+            ("x D dd yy p P", "builtin: delete / yank / put"),
+            ("u Ctrl+r", "builtin: undo / redo"),
         ],
     ),
     (
         "Run",
         &[
             ("Shift+Enter r", "run + advance"),
-            ("Ctrl+Enter", "run in place"),
-            ("Ctrl+r", "run all"),
+            ("Space Ctrl+Enter", "run in place"),
+            ("X", "run all (selection follows)"),
             ("< >", "run all above / this and below"),
             ("Ctrl+c", "interrupt kernel"),
-            ("R", "restart kernel"),
+            ("R", "restart kernel (asks · a: + run all)"),
         ],
     ),
     (
         "Cells",
         &[
             ("a b", "new cell after / before"),
-            ("dd p", "delete / paste deleted cell"),
-            ("yy", "copy source to clipboard"),
+            ("dd yy p", "delete / copy / paste cell"),
+            ("M", "merge with the cell below"),
             ("J K", "move down / up"),
-            ("u", "undo cell operation"),
+            ("u Ctrl+r", "undo / redo cell operation"),
         ],
     ),
     (
         "Outputs",
         &[
             ("o", "hide / show output"),
+            ("c C", "clear output / all outputs"),
             ("[ ]", "scroll long output"),
             ("z", "zoom image fullscreen"),
             ("Z", "toggle native-size images"),
@@ -1558,6 +2086,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
         "File & app",
         &[
             ("w W", "save / force save"),
+            ("S", "save as"),
             ("q", "quit"),
             ("L", "view logs"),
             ("D", "debug info for this cell"),
@@ -1575,7 +2104,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
 ];
 
 /// Width of the key column: the longest chord list.
-const HELP_KEY_W: usize = 15;
+const HELP_KEY_W: usize = 17;
 
 fn help_section(title: &str, rows: &[(&str, &str)]) -> Vec<Line<'static>> {
     let key = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
@@ -1846,10 +2375,13 @@ mod tests {
             collapsed: false,
             full_images: false,
             elapsed: None,
+            wrap: Wrapped::default(),
         };
+        block.rewrap(0);
         assert_eq!(block.window(), (0, rows + 1, false), "plot arrives whole");
         // only genuine text spam scrolls: image rows extend the budget
         block.lines.extend(vec![Line::raw(""); 40]);
+        block.rewrap(0);
         let (start, shown, footer) = block.window();
         assert!(footer);
         assert_eq!(shown, max_output_rows() + rows);
@@ -1911,6 +2443,122 @@ mod tests {
     }
 
     #[test]
+    fn wrap_breaks_at_spaces_hard_breaks_long_words_and_keeps_nbsp() {
+        let text = |w: &Wrapped| -> Vec<String> {
+            w.rows.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect()).collect()
+        };
+        let red = Style::new().fg(Color::Red);
+        let line = Line::from(vec![Span::raw("aaa bbb "), Span::styled("ccc", red)]);
+        let w = wrap_lines(std::slice::from_ref(&line), 8);
+        assert_eq!(text(&w), ["aaa bbb ", "ccc"]);
+        assert_eq!(w.rows[1].spans[0].style, red, "styles survive the split");
+        assert_eq!(w.origin[1], RowOrigin { line: 0, col: 8, x: 8 });
+        // unwrapped when it fits, or with width 0
+        assert_eq!(wrap_lines(std::slice::from_ref(&line), 11).rows.len(), 1);
+        assert_eq!(wrap_lines(&[line], 0).rows.len(), 1);
+        // a word longer than the row hard-breaks
+        assert_eq!(text(&wrap_lines(&[Line::raw("abcdefghij")], 4)), ["abcd", "efgh", "ij"]);
+        // NBSP-reserved inline math moves whole to the next row
+        let math = format!("ab {}", "\u{a0}".repeat(4));
+        let w = wrap_lines(&[Line::raw(math)], 5);
+        assert_eq!(w.rows.len(), 2);
+        assert_eq!(w.locate(0, 3), (1, 0), "image column maps onto the new row");
+        // wide chars count double
+        assert_eq!(text(&wrap_lines(&[Line::raw("日本語")], 4)), ["日本", "語"]);
+        // row lookup for the editor cursor
+        let w = wrap_lines(&[Line::raw("one two three"), Line::raw("x")], 8);
+        assert_eq!(w.row_of_char(0, 10), (1, 8));
+        assert_eq!(w.row_of_char(1, 0), (2, 0));
+    }
+
+    #[test]
+    fn completion_popup_draws_aligned_columns_and_a_scrollbar() {
+        use crate::app::Completion;
+        let nb_json = serde_json::json!({
+            "cells": [{"cell_type": "code", "id": "c", "metadata": {}, "execution_count": null,
+                       "outputs": [], "source": ["x = np.li"]}],
+            "metadata": {}, "nbformat": 4, "nbformat_minor": 5
+        });
+        let path = std::env::temp_dir().join(format!("jotter-pop-{}.ipynb", std::process::id()));
+        std::fs::write(&path, nb_json.to_string()).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::open(path.clone(), None, tx).unwrap();
+        std::fs::remove_file(&path).ok();
+        let mut rendered = Rendered::build(&app.notebook, None, Default::default());
+        app.open_editor_for_test();
+        let mut c = Completion::for_test(6, 9);
+        for (i, name) in (0..20).map(|i| (i, format!(".li{i:02}"))) {
+            c.push_for_test(&name, if i % 2 == 0 { "function" } else { "instance" },
+                if i % 2 == 0 { "(start, stop, num=50)" } else { "int" });
+        }
+        c.sel = 13; // scrolled past the first window
+        app.completion = Some(c);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(70, 20)).unwrap();
+        terminal.draw(|f| draw(f, &mut app, &mut rendered)).unwrap();
+        let rows = buffer_rows(&terminal);
+        if std::env::var_os("JOTTER_SHOW").is_some() {
+            println!("{}", rows.join("\n"));
+        }
+        let pop: Vec<&String> = rows.iter().filter(|r| r.contains("Function") || r.contains("Variable")).collect();
+        assert_eq!(pop.len(), 12, "12-row window");
+        // text column starts under the token after `np.` ("▌ x = np." = 9 cols)
+        let col = |r: &str, pat: &str| r.find(pat).map(|b| r[..b].chars().count());
+        assert!(pop.iter().all(|r| col(r, "li").is_some_and(|c| c == 9)), "{pop:#?}");
+        let kind_col = col(pop[0], "Variable").or(col(pop[0], "Function"));
+        assert!(pop.iter().all(|r| col(r, "Variable").or(col(r, "Function")) == kind_col));
+        assert!(pop.iter().any(|r| r.contains("li13")), "selection visible");
+    }
+
+    #[test]
+    fn completion_window_scrolls_only_when_the_selection_leaves_it() {
+        // down past the bottom: window follows by one
+        assert_eq!(scroll_window(0, 12, 12, 30), 1);
+        // back up inside the window: window stays put (the reported bug)
+        assert_eq!(scroll_window(1, 11, 12, 30), 1);
+        assert_eq!(scroll_window(1, 1, 12, 30), 1);
+        // above the top: window follows up
+        assert_eq!(scroll_window(1, 0, 12, 30), 0);
+        // wrap to the last item from the top
+        assert_eq!(scroll_window(0, 29, 12, 30), 18);
+        assert_eq!(fit("abcdef", 4), "abc…");
+        assert_eq!(fit("abc", 4), "abc");
+    }
+
+    #[test]
+    fn tabs_are_visible_in_source_and_expanded_in_outputs() {
+        let spans = show_tabs("\tx = 1", Style::new());
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "→x = 1", "one visible column per tab");
+        assert_eq!(expand_tabs("a\tb\n\x1b[31mab\tc"), "a       b\n\x1b[31mab      c");
+    }
+
+    #[test]
+    fn long_markdown_wraps_instead_of_clipping() {
+        let prose = "word ".repeat(30);
+        let nb_json = serde_json::json!({
+            "cells": [{"cell_type": "markdown", "id": "m", "metadata": {}, "source": [prose.trim_end()]}],
+            "metadata": {}, "nbformat": 4, "nbformat_minor": 5
+        });
+        let path = std::env::temp_dir().join(format!("jotter-wrap-{}.ipynb", std::process::id()));
+        std::fs::write(&path, nb_json.to_string()).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::open(path.clone(), None, tx).unwrap();
+        std::fs::remove_file(&path).ok();
+        let mut rendered = Rendered::build(&app.notebook, None, Default::default());
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 12)).unwrap();
+        terminal.draw(|f| draw(f, &mut app, &mut rendered)).unwrap();
+        let words: usize = buffer_rows(&terminal).iter().map(|r| r.matches("word").count()).sum();
+        assert_eq!(words, 30, "every word visible across wrapped rows");
+        // clicks on a continuation row map back to the one source line
+        assert!(matches!(
+            app.hit[2].kind,
+            crate::app::HitKind::Source { line: 0, .. }
+        ));
+    }
+
+    #[test]
     fn overlays_are_padded_and_help_is_grouped() {
         let render = |w: u16, h: u16, f: &dyn Fn(&mut Frame)| {
             let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
@@ -1929,7 +2577,7 @@ mod tests {
         assert!(all.contains("Navigate") && all.contains("Mouse"));
         // two columns at this width: Navigate and Mouse share a row range
         let row_of = |needle: &str| rows.iter().position(|r| r.contains(needle)).unwrap();
-        assert!(row_of("Mouse") < row_of("Inside the builtin editor") + 20);
+        assert!(row_of("Mouse") < row_of("Inside the editor") + 20);
         // padding: no content glyph directly after the left border
         for r in rows.iter().filter(|r| r.contains('│')) {
             let after = r.split('│').nth(1).unwrap_or("");
@@ -1961,7 +2609,7 @@ mod tests {
         let rows = buffer_rows(&terminal);
         let all = rows.join("\n");
         assert!(
-            rows[0].contains("▶ In [3]:"),
+            rows[0].starts_with("▌  In [3] ") && rows[0].trim_end().ends_with('─'),
             "selected prompt: {}",
             rows[0]
         );
@@ -1970,7 +2618,7 @@ mod tests {
         assert!(!all.contains("line-0 "), "head clipped:\n{all}");
         assert!(all.contains("··· output"), "footer present:\n{all}");
         assert!(
-            all.contains("[markdown]") && all.contains("Big Title"),
+            all.contains(" markdown  ─") && all.contains("Big Title"),
             "{all}"
         );
         assert!(rows[29].contains("cell 1/2"), "status line: {}", rows[29]);
