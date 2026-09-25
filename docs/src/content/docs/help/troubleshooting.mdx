@@ -1,0 +1,77 @@
+---
+title: "Troubleshooting"
+description: "Fixes for the problems people run into most: kernels, images, keys and the Neovim backend."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+If your problem isn't here, check the [log](#reading-the-log) and then [report a bug](/jotter/help/reporting-bugs/).
+
+## No kernel found
+
+The status line says `no kernelspec found (tried ["…", "python3"])`.
+
+jOtter found no kernel with the notebook's kernel name, nor a `python3` fallback. Usually `ipykernel` isn't installed in the environment you expect:
+
+```sh
+.venv/bin/python -m pip install ipykernel     # a .venv next to the notebook
+python -m pip install ipykernel               # the activated environment
+```
+
+If the notebook asks for a named kernel you don't have (look at `metadata.kernelspec.name`), either register one under that name, or choose one explicitly with `--kernel python3`. `jupyter kernelspec list` shows the kernels Jupyter can see. [Kernels](/jotter/getting-started/kernels/) explains the full search order.
+
+## The kernel starts, but imports fail
+
+The kernel runs in a different environment from the one you installed packages in. Check what the kernel is using:
+
+```python
+import sys; sys.executable
+```
+
+If that isn't your project's Python, activate the right environment before starting jOtter, or put a `.venv` with `ipykernel` next to the notebook, which takes precedence over global kernels.
+
+## The kernel dies
+
+The status line shows the reason and `R to restart`. The most common cause is running out of memory. Press <kbd>R</kbd> to start a fresh kernel, and run jOtter with `--log` to see what the kernel printed before it died.
+
+## Images are blocky, or missing
+
+Blocky images mean your terminal has no image protocol, so jOtter falls back to half-block characters. Use a terminal with kitty graphics or sixel support; see [Terminal compatibility](/jotter/reference/terminals/).
+
+- **Inside tmux**, add `set -g allow-passthrough on` to `~/.tmux.conf`.
+- **Over SSH**, image support depends on your local terminal and works the same as locally.
+- Were images turned off with `--no-images`?
+
+## Images are cut off at the right
+
+Images wider than the terminal are cropped, not scaled. Make figures smaller, for example `plt.figure(figsize=(6, 3))`, or set `plt.rcParams["figure.dpi"]` lower.
+
+## Shift+Enter inserts a line instead of running
+
+Your terminal doesn't support the kitty keyboard protocol, so it sends plain <kbd>Enter</kbd>. Press <kbd>Esc</kbd> and then <kbd>r</kbd>, which runs the cell and advances, or <kbd>Space</kbd> to run it in place. WezTerm users can set `enable_kitty_keyboard = true`.
+
+## Text selection doesn't work
+
+jOtter captures the mouse. Hold <kbd>Shift</kbd> while dragging to use your terminal's selection, or press <kbd>y</kbd><kbd>y</kbd> to copy a whole cell.
+
+## Copying to the clipboard doesn't work
+
+<kbd>y</kbd><kbd>y</kbd> and <kbd>D</kbd> copy through the terminal's OSC 52 sequence. Some terminals disable it by default; in tmux, set `set -g set-clipboard on`.
+
+## My config is ignored
+
+The status line says `config ignored (…): …` when `config.toml` has a syntax error or an unknown key. The message names the problem; every setting falls back to its default until you fix it. The valid keys are listed in [Configuration](/jotter/reference/configuration/).
+
+## Neovim backend problems
+
+- **`nvim unavailable — builtin editor`**: Neovim isn't on your `PATH`, or it failed to start. jOtter uses the builtin editor instead.
+- **A plugin's window was closed and the status line says so**: the plugin opened a window, which jOtter can't draw. Guard it with `vim.g.jotter`; see [Embedded Neovim](/jotter/guides/neovim/#your-config-and-plugins).
+- **Editing feels slow, or a key does nothing**: a plugin may be blocking on a prompt. Try `nvim_user_config = false` to rule out your config.
+
+## Reading the log
+
+Press <kbd>L</kbd> to see this session's messages. For the full picture, including every message exchanged with the kernel, start jOtter with a log file:
+
+```sh
+jotter --log /tmp/jotter.log notebook.ipynb
+```

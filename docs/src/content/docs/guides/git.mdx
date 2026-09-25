@@ -1,0 +1,36 @@
+---
+title: "Notebooks in git"
+description: "Keep diffs small and repositories clean when notebooks live in version control."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+jOtter writes standard nbformat 4 JSON with the same layout as JupyterLab, so switching tools doesn't cause noisy diffs. Its autosaves live in `~/.local/state/jotter/`, never in your repository.
+
+## Clearing outputs before committing
+
+Outputs, especially images, make diffs large. Press <kbd>C</kbd> to clear all outputs, then <kbd>w</kbd> to save. <kbd>u</kbd> brings them back if you change your mind.
+
+To strip outputs automatically on every commit, use [nbstripout](https://github.com/kynan/nbstripout):
+
+```sh
+pip install nbstripout
+nbstripout --install     # in the repository; adds a git filter
+```
+
+Your working copy keeps its outputs; only the committed version is stripped.
+
+## Reading diffs
+
+[nbdime](https://nbdime.readthedocs.io) shows notebook diffs cell by cell instead of as raw JSON:
+
+```sh
+pip install nbdime
+nbdime config-git --enable
+git diff notebook.ipynb
+```
+
+## Checkouts and merges
+
+When git changes a notebook that's open in jOtter, jOtter reloads it, or asks first if you have unsaved changes. See [Data safety](/jotter/guides/data-safety/#when-the-file-changes-on-disk).

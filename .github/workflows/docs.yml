@@ -2,25 +2,50 @@ name: docs
 on:
   push:
     branches: [main]
-    paths: [README.md, docs/**, assets/**]
+    # reference pages are generated from src/, so source changes redeploy too
+    paths: [docs/**, src/**, assets/**, .github/workflows/docs.yml]
+  pull_request:
+    paths: [docs/**, src/**, assets/**, .github/workflows/docs.yml]
   workflow_dispatch:
 
 permissions:
+  contents: read
   pages: write
   id-token: write
 
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # "last updated" dates come from git history
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci
+        working-directory: docs
+      - run: npm run build # runs `jotter --generate` first; fails on broken links
+        working-directory: docs
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/dist
+
   deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - run: curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz | tar xz
-      - run: cp -r assets docs/src/ && ./mdbook build docs
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: docs/book
       - id: deploy
         uses: actions/deploy-pages@v4

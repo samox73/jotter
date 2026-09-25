@@ -15,6 +15,12 @@
           version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
+          nativeBuildInputs = [ pkgs.installShellFiles ];
+          postInstall = ''
+            $out/bin/jotter --generate gen
+            installManPage gen/man/jotter.1
+            installShellCompletion gen/completions/{jotter.bash,jotter.fish,_jotter}
+          '';
           # tests spawn no kernels (the real-kernel test is #[ignore]d)
           meta = {
             description = "A fast Jupyter notebook TUI";

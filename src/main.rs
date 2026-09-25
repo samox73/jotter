@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod editor;
+mod gendocs;
 mod kernel;
 mod latex;
 mod log;
@@ -10,7 +11,7 @@ mod ui;
 
 use anyhow::Result;
 use app::{Action, App};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
     DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, Event,
@@ -22,12 +23,18 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 use ui::Rendered;
 
-/// jOtter — a fast Jupyter notebook TUI. The Jupyter otter. 🦦
+/// A fast Jupyter notebook TUI
+///
+/// Open, edit and run .ipynb notebooks in the terminal, with vim keys, inline
+/// plots and rendered LaTeX. Press ? inside for the keys.
+///
+/// Documentation: https://samox73.github.io/jotter/
 #[derive(Parser)]
 #[command(name = "jotter", version)]
 struct Args {
     /// Path to the .ipynb file to open
-    notebook: PathBuf,
+    #[arg(required_unless_present = "generate")]
+    notebook: Option<PathBuf>,
     /// Kernelspec name (default: the notebook's kernelspec, then python3)
     #[arg(long)]
     kernel: Option<String>,
@@ -37,6 +44,9 @@ struct Args {
     /// Append a debug log (jotter + kernel wire) to this file
     #[arg(long)]
     log: Option<PathBuf>,
+    /// Write docs reference pages, man page and completions into DIR
+    #[arg(long, hide = true, value_name = "DIR")]
+    generate: Option<PathBuf>,
 }
 
 /// Physically clear the screen. (`Terminal::clear` would also query the
@@ -66,10 +76,14 @@ fn leave_extras(enhanced: bool) {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    let Some(notebook) = args.notebook else {
+        let dir = args.generate.expect("clap requires notebook or --generate");
+        return gendocs::generate(Args::command(), &dir);
+    };
     let config_warning = config::init();
     log::init(args.log.as_deref())?; // bad log path: fail loudly before the alt screen
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
-    let mut app = App::open(args.notebook, args.kernel, events_tx)?; // parse errors print before the alt screen
+    let mut app = App::open(notebook, args.kernel, events_tx)?; // parse errors print before the alt screen
     if let Some(warning) = config_warning {
         app.message = Some(warning);
     }

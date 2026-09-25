@@ -1,0 +1,30 @@
+---
+title: "Files and paths"
+description: "Where jOtter reads its configuration and writes autosaves, logs and temporary files."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+jOtter follows the [XDG base directory](https://specifications.freedesktop.org/basedir-spec/latest/) conventions. It writes nothing next to your notebooks except the notebooks themselves.
+
+| What | Path | Notes |
+| --- | --- | --- |
+| Configuration | `$XDG_CONFIG_HOME/jotter/config.toml`, default `~/.config/jotter/config.toml` | Optional. See [Configuration](/jotter/reference/configuration/). |
+| Autosaves | `$XDG_STATE_HOME/jotter/autosave/`, default `~/.local/state/jotter/autosave/` | One file per notebook, named after its absolute path with `/` replaced by `%`. Removed when you save. |
+| Debug log | wherever `--log` points | Only written with `--log`; appended to, never truncated. |
+| External-editor file | `$TMPDIR/jotter-cell-<pid>.<ext>`, default `/tmp` | Exists only while <kbd>E</kbd> is open. |
+
+The kernel's own files, such as its connection file, are handled by the Jupyter libraries in their usual runtime directory.
+
+## Kernelspecs
+
+jOtter looks for kernelspecs in the active environment, a `.venv` or `venv` next to the notebook, and the standard Jupyter paths. The full search order is in [Kernels](/jotter/getting-started/kernels/#how-jotter-picks-a-kernel).
+
+## Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `XDG_CONFIG_HOME`, `XDG_STATE_HOME` | Move the config and state directories. |
+| `VISUAL`, `EDITOR` | The editor for <kbd>E</kbd>, in that order; `vi` if neither is set. |
+| `VIRTUAL_ENV`, `CONDA_PREFIX` | An activated environment whose kernel is preferred. |
+| `JUPYTER_PATH` | Extra directories to search for kernelspecs. |

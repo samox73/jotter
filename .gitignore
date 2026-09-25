@@ -1,4 +1,7 @@
 /target
 *.ipynb.autosave
-/docs/book
-/docs/src/assets
+/docs/node_modules
+/docs/dist
+/docs/.astro
+/docs/src/content/docs/reference/generated
+/docs/public/media

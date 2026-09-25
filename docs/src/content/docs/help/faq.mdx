@@ -1,0 +1,44 @@
+---
+title: "FAQ"
+description: "Frequently asked questions about jOtter."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## How is jOtter different from JupyterLab?
+
+JupyterLab runs in a browser; jOtter runs in your terminal, starts instantly, and works over SSH without port forwarding. Both run the same kernels and read and write the same files, so you can switch between them on the same notebook.
+
+JupyterLab has things jOtter doesn't: interactive widgets, HTML outputs, multiple notebooks in tabs, and extensions.
+
+## How is it different from other terminal notebook tools?
+
+jOtter aims to be fast, to leave notebooks written by other tools untouched, and to feel at home for vim users. It renders plots and math with real terminal graphics where the terminal supports them.
+
+## Can I connect to a running kernel or a remote Jupyter server?
+
+No. jOtter always starts its own kernel, which it needs so that interrupting and restarting work reliably. To work on a remote machine, run jOtter there over SSH.
+
+## Does it work over SSH?
+
+Yes. Run jOtter on the remote machine. Images work if your local terminal supports an image protocol, and clipboard copies work through OSC 52.
+
+## Does it support languages other than Python?
+
+Yes, any Jupyter kernel works. Syntax highlighting follows the notebook's language. Completion and documentation work with kernels that implement them. See [Kernels](/jotter/getting-started/kernels/#other-languages).
+
+## Can I remap keys?
+
+Not yet. The keys are listed in [Keybindings](/jotter/reference/keybindings/). With the [Neovim backend](/jotter/guides/neovim/), your own Neovim mappings apply inside cells.
+
+## Does it run on macOS or Windows?
+
+macOS: it builds and runs (`cargo install jotter-tui`, or the Nix flake), but isn't regularly tested. Windows is not supported; WSL works like Linux.
+
+## Why is the crate called jotter-tui?
+
+The name `jotter` was already taken on crates.io. The installed program is still called `jotter`.
+
+## Where does the name come from?
+
+A *jotter* is a notebook, and there's an otter in jOtter. The mascot is always taking notes.

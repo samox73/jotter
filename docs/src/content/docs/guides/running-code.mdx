@@ -1,0 +1,66 @@
+---
+title: "Running code"
+description: "Run cells one by one or all at once, interrupt and restart the kernel, and answer input() prompts."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+<Clip name="run-all" caption="Run all: queued cells drain one by one, and the selection follows the running cell" />
+
+Cells run on the notebook's [kernel](/jotter/getting-started/kernels/). Output streams in live as the kernel produces it.
+
+## Running cells
+
+| Key | Does |
+| --- | --- |
+| <kbd>Shift</kbd>+<kbd>Enter</kbd> or <kbd>r</kbd> | Run the cell and select the next one |
+| <kbd>Ctrl</kbd>+<kbd>Enter</kbd> or <kbd>Space</kbd> | Run the cell and stay on it |
+| <kbd>X</kbd> | Run all cells |
+| <kbd>&lt;</kbd> | Run all cells above the selected one |
+| <kbd>&gt;</kbd> | Run the selected cell and all cells below |
+
+<kbd>Shift</kbd>+<kbd>Enter</kbd> and <kbd>Ctrl</kbd>+<kbd>Enter</kbd> need a terminal with the kitty keyboard protocol; <kbd>r</kbd> and <kbd>Space</kbd> work everywhere. See [Terminal setup](/jotter/getting-started/terminal-setup/).
+
+## The gutter
+
+Each code cell's header shows its state:
+
+- `In [ ]`: not run yet.
+- `In [·]`: queued, waiting for the cells before it.
+- `In [*]`: running now.
+- `In [3]`: the execution count. After a run in this session, the header also shows how long it took.
+
+When you run several cells with <kbd>X</kbd>, <kbd>&lt;</kbd> or <kbd>&gt;</kbd>, the selection follows the cell that is running, so you watch the notebook execute. Move the selection yourself and it stops following.
+
+Cells you run while the kernel is still starting are queued and run as soon as it's ready.
+
+## Interrupting and restarting
+
+<kbd>Ctrl</kbd>+<kbd>c</kbd> interrupts the kernel, like the stop button in JupyterLab: the running cell ends with a `KeyboardInterrupt`.
+
+When a cell fails, whether from an interrupt or an exception, the kernel skips the cells queued behind it, as in JupyterLab. A run-all therefore stops at the first error.
+
+<kbd>R</kbd> restarts the kernel, which clears all variables. jOtter asks first:
+
+- <kbd>R</kbd> restarts.
+- <kbd>a</kbd> restarts and then runs all cells.
+- Any other key cancels.
+
+If the kernel dies (for example, out of memory), the status line says so and <kbd>R</kbd> starts a new one.
+
+## input()
+
+When code calls `input()`, the prompt appears in the status line. Type your answer and press <kbd>Enter</kbd>. `getpass()` works too: what you type is shown as dots.
+
+<Clip name="input" />
+
+## Status line
+
+The status line at the bottom shows, from left to right:
+
+- The mode: `VIEW` in notebook mode; `NORMAL`, `INSERT`, `VISUAL` and so on while editing a cell.
+- The file name, with `[+]` when there are unsaved changes.
+- The selected cell's position, like `cell 3/12`.
+- The kernel's state: `○ idle`, `● busy` or `◌ no kernel`.
+- Messages, questions such as the quit prompt, and what you type for search, save-as or `input()`.

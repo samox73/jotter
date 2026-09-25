@@ -1,0 +1,116 @@
+---
+title: "Installation"
+description: "Install jOtter from a distribution package, Nix, Cargo, a static binary, or from source."
+---
+
+import { Tabs, TabItem, Aside, Steps } from '@astrojs/starlight/components';
+
+jOtter is a single binary for Linux (x86_64 and aarch64). Every [release](https://github.com/samox73/jotter/releases) ships distribution packages and a static binary that runs on any distribution. macOS builds from source; Windows is not supported.
+
+To run code you also need a Jupyter kernel, usually Python's `ipykernel`. See [Kernels](/jotter/getting-started/kernels/).
+
+## Packages
+
+Download the file for your distribution and architecture from the [latest release](https://github.com/samox73/jotter/releases/latest), then install it with your package manager. The packages install the binary, the man page (`man jotter`), shell completions for bash, zsh and fish, and the licenses. They recommend, but don't require, your distribution's `ipykernel` package.
+
+<Tabs syncKey="distro">
+  <TabItem label="Debian / Ubuntu">
+    ```sh
+    sudo apt install ./jotter_*_amd64.deb     # arm64: jotter_*_arm64.deb
+    ```
+  </TabItem>
+  <TabItem label="Fedora / RHEL / openSUSE">
+    ```sh
+    sudo dnf install ./jotter-*.x86_64.rpm    # aarch64: jotter-*.aarch64.rpm
+    # openSUSE: sudo zypper install ./jotter-*.x86_64.rpm
+    ```
+  </TabItem>
+  <TabItem label="Alpine">
+    ```sh
+    sudo apk add --allow-untrusted ./jotter_*_x86_64.apk
+    ```
+    The package is not signed with an Alpine key, hence `--allow-untrusted`. Check it against `SHA256SUMS` first (see below).
+  </TabItem>
+  <TabItem label="Arch">
+    Use the static binary below for now; an AUR package is planned.
+  </TabItem>
+</Tabs>
+
+## Nix
+
+The repository is a flake with a package for Linux and macOS:
+
+```sh
+nix run github:samox73/jotter -- notebook.ipynb   # try it without installing
+nix profile install github:samox73/jotter         # install into your profile
+```
+
+On NixOS or with home-manager, add the flake as an input and put its package in your packages:
+
+```nix
+{
+  inputs.jotter.url = "github:samox73/jotter";
+  # ...
+  environment.systemPackages = [ inputs.jotter.packages.${pkgs.system}.default ];
+  # home-manager: home.packages = [ inputs.jotter.packages.${pkgs.system}.default ];
+}
+```
+
+## Cargo
+
+The crate is called `jotter-tui` on crates.io (the name `jotter` was taken); the binary it installs is still `jotter`. Rust 1.85 or newer is required.
+
+```sh
+cargo install jotter-tui --locked
+```
+
+## Static binary
+
+The release tarballs contain a statically linked binary, so they run on any Linux distribution regardless of its glibc version.
+
+```sh
+curl -L https://github.com/samox73/jotter/releases/latest/download/jotter-x86_64-linux.tar.gz | tar xz jotter
+install -Dm755 jotter ~/.local/bin/jotter
+```
+
+Replace `x86_64` with `aarch64` on ARM machines.
+
+## Verify a download
+
+Every release has a `SHA256SUMS` file covering all artifacts. Put it next to what you downloaded and run:
+
+```sh
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+## From source
+
+<Steps>
+
+1. Install Rust 1.85 or newer ([rustup](https://rustup.rs)). jOtter needs no system libraries: its ZeroMQ stack is pure Rust.
+
+2. Build and install:
+
+   ```sh
+   git clone https://github.com/samox73/jotter
+   cd jotter
+   cargo install --path . --locked
+   ```
+
+   With Nix, `nix develop` gives you the toolchain instead.
+
+</Steps>
+
+## Shell completions and man page
+
+The distribution packages and the Nix package install the man page and bash, zsh and fish completions for you. With Cargo or the static binary, or for Nushell, generate them yourself:
+
+```sh
+jotter --generate out/     # writes out/man/jotter.1 and out/completions/*
+```
+
+`out/completions/` contains `jotter.bash`, `_jotter` (zsh), `jotter.fish` and `jotter.nu` (Nushell). Copy them where your shell looks for completions; for Nushell, `source` the file from your `config.nu`.
+
+## Updating and uninstalling
+
+Install a newer package, tarball or `cargo install` over the old one. Uninstall with your package manager, `cargo uninstall jotter-tui`, or by deleting the binary. jOtter keeps its [configuration and autosaves](/jotter/reference/files/) under your XDG directories; delete `~/.config/jotter` and `~/.local/state/jotter` to remove them too.

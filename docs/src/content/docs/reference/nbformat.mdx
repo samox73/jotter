@@ -1,0 +1,48 @@
+---
+title: "Notebook compatibility"
+description: "What jOtter preserves when saving, which output types it renders, and what it shows as placeholders."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+jOtter reads and writes the Jupyter notebook format, **nbformat 4**, and saves version 4.5.
+
+## Lossless round trips
+
+Opening and saving a notebook in jOtter changes only what you changed. In particular:
+
+- **Everything jOtter doesn't use is kept.** Notebook, cell and output metadata, attachments, and fields added by other tools (JupyterLab extensions, Colab, VS Code, papermill…) are written back exactly as they were read.
+- **Byte-identical output.** jOtter writes the same JSON layout as Jupyter's own `nbformat` library: sorted keys, one-space indentation, a trailing newline. Saving an unchanged notebook from JupyterLab and from jOtter produces the same file, so there is no diff noise in git.
+- **Cell ids.** Existing ids are kept. Notebooks older than nbformat 4.5 get ids added and are saved as 4.5, as Jupyter itself does.
+- **Kernelspec.** A notebook without a kernelspec gets one on the first save, for the kernel it ran with. An existing kernelspec is never changed.
+
+Session-only data from the kernel, such as display ids used to update outputs, is not saved, matching JupyterLab.
+
+## Output types
+
+| MIME type | Shown as |
+| --- | --- |
+| `text/plain` | Text, with ANSI colours |
+| Streams (stdout, stderr) and errors | Text and coloured tracebacks |
+| `image/png`, `image/jpeg`, `image/gif` | Inline image |
+| `image/svg+xml` | Inline image (rendered with resvg) |
+| `text/latex` | Rendered equation |
+| `text/markdown` | Rendered markdown |
+| `text/html`, `application/javascript`, widgets, others | The `text/plain` version when there is one; otherwise a `[mime/type]` placeholder |
+
+When an output carries several representations, jOtter shows the richest one it can: an image first, then LaTeX, then markdown, then plain text. The others stay in the file.
+
+## Cell types
+
+| Type | Shown as |
+| --- | --- |
+| Code | Highlighted in the notebook's language, with outputs |
+| Markdown | Rendered, see [Markdown cells](/jotter/guides/markdown/) |
+| Raw with `metadata.format: text/latex` | Rendered as math (a *latex* cell) |
+| Other raw cells | Plain text |
+
+## Not supported
+
+- **ipywidgets** are not interactive. A widget output shows its text version or a placeholder.
+- **HTML and JavaScript outputs** are not rendered.
+- **Jupytext and percent-format scripts** (`.py` notebooks) can't be opened; convert them to `.ipynb` first with `jupytext --to ipynb`.

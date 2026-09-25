@@ -1,0 +1,43 @@
+---
+title: "Architecture"
+description: "How jOtter is put together: the event loop, the render cache and the kernel connection."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+jOtter is a single Rust binary, built on [ratatui](https://ratatui.rs) for drawing and [tokio](https://tokio.rs) for concurrency. This page is a map for contributors.
+
+## Modules
+
+| Module | Responsibility |
+| --- | --- |
+| `main.rs` | Command line, terminal setup and teardown, the event loop |
+| `app.rs`, `app/` | Application state and key handling; cell operations and undo (`cellops.rs`); completion (`completion.rs`) |
+| `ui.rs` | Rendering: the per-cell render cache, markdown, images, the status line, overlays |
+| `notebook.rs` | The nbformat model, lossless loading and saving |
+| `kernel.rs` | Finding, starting and talking to the Jupyter kernel over ZeroMQ |
+| `editor.rs` | The builtin modal cell editor |
+| `nvim.rs` | The embedded Neovim backend |
+| `latex.rs` | Math rendering (RaTeX → SVG → image) |
+| `config.rs`, `log.rs` | Configuration file and logging |
+| `gendocs.rs` | Generates reference pages, man page and completions |
+
+## The event loop
+
+One `tokio::select!` loop waits on terminal events (keys, mouse, resize, focus), kernel events, Unix signals and the autosave timer. Each event updates the state, and then the screen is drawn once. There is no polling: an idle jOtter uses no CPU.
+
+## Rendering
+
+Drawing has to be fast enough that holding a key down never lags. The expensive work (syntax highlighting, markdown, math, decoding and scaling images, wrapping) happens once per cell and is cached. It's redone only for the cell that changed, or for everything when the terminal's width or font size changes. Each frame then draws only the visible rows from the cache, which takes microseconds.
+
+## Notebook model
+
+Every level of the notebook (notebook, cell, output) keeps the fields jOtter doesn't understand in a catch-all map, so they are written back unchanged. Saving writes the same bytes as Jupyter's `nbformat` library, atomically: temporary file, `fsync`, rename.
+
+## Kernel
+
+`kernel.rs` finds a kernelspec, starts the kernel process with the notebook's directory as working directory, and connects its ZeroMQ channels using [jupyter-zmq-client](https://crates.io/crates/jupyter-zmq-client), which is pure Rust. A background task turns kernel messages into events for the main loop. Outputs are matched to cells by message id, and stream semantics (merging, `\r`, `clear_output`, display updates) are applied as they arrive.
+
+## Neovim backend
+
+`nvim.rs` starts `nvim --embed` and talks to it with a small, synchronous msgpack-RPC client. After each key, one request both waits for Neovim to finish processing it and reads back the buffer, cursor, mode and command line. A round trip takes about 160 µs.

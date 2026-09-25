@@ -1,0 +1,55 @@
+---
+title: "Contributing"
+description: "Set up a development environment, run the tests, and work on the docs."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Contributions are welcome: bug reports, fixes, features and documentation. For anything larger than a small fix, please open an issue first, so we can agree on the approach before you invest time.
+
+## Development setup
+
+You need Rust 1.85 or newer. With Nix, `nix develop` provides the toolchain.
+
+```sh
+git clone https://github.com/samox73/jotter
+cd jotter
+cargo run -- showcase.ipynb
+```
+
+`showcase.ipynb` exercises most features. To run it you need a Python with `ipykernel`, for example `uv venv && uv pip install ipykernel numpy matplotlib tqdm`.
+
+## Checks
+
+CI runs these on every pull request; run them before you push:
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+A few tests need a real kernel or Neovim and are marked `#[ignore]`. Run them with `cargo test -- --ignored`.
+
+## Commits
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org): `feat: …`, `fix: …`, `docs: …`, `refactor: …`. The changelog is generated from them.
+
+## Documentation
+
+The site you're reading lives in `docs/` and is built with [Starlight](https://starlight.astro.build).
+
+```sh
+cd docs
+npm ci
+npm run dev        # live preview at http://localhost:4321/jotter/
+```
+
+- Pages are MDX files in `docs/src/content/docs/`.
+- The [Keybindings](/jotter/reference/keybindings/), [Configuration](/jotter/reference/configuration/) and [Command line](/jotter/reference/cli/) pages are generated from the source code by `jotter --generate`, which `npm run dev` and `npm run build` run first. Edit `HELP` in `src/ui.rs`, the doc comments on `Config` in `src/config.rs`, or the `Args` in `src/main.rs`; not the generated files.
+- A test fails if a config option has no doc comment.
+- The build fails on broken internal links.
+
+## Releases
+
+Pushing a tag like `v0.2.0` builds and publishes everything: static binaries, deb, rpm and apk packages, the GitHub release, and the crates.io package. The tag must match the version in `Cargo.toml`.

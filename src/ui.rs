@@ -2108,7 +2108,7 @@ fn draw_debug(frame: &mut Frame, text: &str) {
 }
 
 /// Help sections: (heading, [(keys, what)]). Keys are space-separated chords.
-const HELP: &[(&str, &[(&str, &str)])] = &[
+pub const HELP: &[(&str, &[(&str, &str)])] = &[
     (
         "Navigate",
         &[

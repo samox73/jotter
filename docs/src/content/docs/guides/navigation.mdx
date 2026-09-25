@@ -1,0 +1,37 @@
+---
+title: "Navigation and search"
+description: "Moving between cells, jumping to a cell by number, scrolling, and searching cell sources."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+<Clip name="search" />
+
+## Moving between cells
+
+| Key | Does |
+| --- | --- |
+| <kbd>j</kbd> <kbd>k</kbd> | Next / previous cell; with a count, `3j` moves three |
+| <kbd>g</kbd> <kbd>G</kbd> | First / last cell |
+| <kbd>5</kbd><kbd>G</kbd> | Go to cell 5 |
+| mouse click | Select a cell |
+| mouse wheel | Scroll the notebook |
+
+The view scrolls to keep the selected cell visible. Scrolling with the wheel doesn't move the selection. If the wheel is over a long output, it scrolls that output first; see [Outputs](/jotter/guides/outputs/#long-outputs).
+
+## Searching
+
+Press <kbd>/</kbd>, type text and press <kbd>Enter</kbd>. jOtter selects the next cell whose source contains it, ignoring case. <kbd>n</kbd> and <kbd>N</kbd> go to the next and previous match, wrapping around the notebook.
+
+Search looks at cell sources only, not outputs.
+
+## Help, logs and debug info
+
+| Key | Does |
+| --- | --- |
+| <kbd>?</kbd> | Show all keys |
+| <kbd>L</kbd> | Show the log: jOtter's and the kernel's messages from this session |
+| <kbd>D</kbd> | Show debug info for the selected cell, and copy it to the clipboard |
+
+The [bug reporting guide](/jotter/help/reporting-bugs/) explains when these help.
