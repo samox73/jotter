@@ -28,7 +28,7 @@ Open, edit, and run real `.ipynb` notebooks in your terminal with vim keys, inli
 - **Jupyter stream semantics**: consecutive stream chunks coalesce, `\r` progress bars (tqdm) overwrite in place, `clear_output` works, and per-cell output is capped at the last 10k lines.
 - **Long outputs** display as a scrollable viewport pinned to the live tail — wheel over it or `[`/`]` to scroll, `o` to collapse.
 - **Data safety**: atomic fsync'd saves, autosave sidecar for crash recovery, save/discard/cancel prompt on quit, and a warning instead of a silent overwrite when the file changed on disk.
-- **input() support**, run-all/above/below with a queued/running gutter, `/` search across cells, cell-op undo, per-cell execution timing, message history (`M`).
+- **input() support**, run-all/above/below with a queued/running gutter, `/` search across cells, cell-op undo, per-cell execution timing, a log viewer (`L`), and a per-cell debug report (`D`, copied to the clipboard) for bug reports.
 
 ## Install
 
@@ -64,7 +64,8 @@ Press `?` inside for the full key reference.
 | `yy` | copy cell source to clipboard |
 | `E` | edit cell in `$EDITOR` |
 | `w` (`W` force) / `q` | save / quit |
-| `Ctrl+C` / `R` / `M` | interrupt / restart kernel / message history |
+| `Ctrl+C` / `R` | interrupt / restart kernel |
+| `L` / `D` | view logs / debug info for the cell (copied to clipboard) |
 
 ## Config
 

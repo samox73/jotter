@@ -112,6 +112,25 @@ impl CellBlock {
     pub fn output_scrollable(&self) -> bool {
         !self.collapsed && self.max_out_scroll() > 0
     }
+
+    /// Render/viewport state for the `D` debug overlay.
+    pub fn debug_summary(&self) -> String {
+        let follow = if self.out_scroll == usize::MAX {
+            "follow".to_string()
+        } else {
+            self.out_scroll.to_string()
+        };
+        format!(
+            "src {} · out {} (cap {}) · out_scroll {follow} → win {} · images {}{}{}",
+            self.src_lines,
+            self.out_len(),
+            self.out_cap(),
+            self.win_start(),
+            self.images.len(),
+            if self.collapsed { " · collapsed" } else { "" },
+            if self.full_images { " · native-size" } else { "" },
+        )
+    }
 }
 
 pub struct Rendered {
@@ -215,6 +234,17 @@ impl Rendered {
         p.set_protocol_type(ptype);
         self.picker = Some(p);
         self.rebuild_all(nb);
+    }
+
+    /// Graphics protocol + font cell size, for the `D` debug overlay.
+    pub fn graphics_summary(&self) -> String {
+        match &self.picker {
+            Some(p) => {
+                let f = p.font_size();
+                format!("{:?}, font {}x{} px", p.protocol_type(), f.width, f.height)
+            }
+            None => "off".into(),
+        }
     }
 
     /// Syntax-highlight source text (used for cached blocks and the live editor).
@@ -952,15 +982,12 @@ fn fmt_duration(d: std::time::Duration) -> String {
 
 pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     use crate::app::{Hit, HitKind};
-    // one chokepoint records every status message into the history + log
+    // one chokepoint sends every status message to the log (viewer: L)
     if let Some(m) = &app.message
-        && app.history.last() != Some(m)
+        && app.logged_status.as_ref() != Some(m)
     {
         log::info!(target: "status", "{m}");
-        app.history.push(m.clone());
-        if app.history.len() > 200 {
-            app.history.remove(0);
-        }
+        app.logged_status = Some(m.clone());
     }
     let [body, status] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
@@ -1257,8 +1284,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     if app.show_help {
         draw_help(frame);
     }
-    if app.show_history {
-        draw_history(frame, &app.history);
+    if let Some(up) = &mut app.logs {
+        draw_logs(frame, up);
+    }
+    if let Some(text) = &app.debug {
+        draw_debug(frame, text);
     }
     if let Some(req) = &app.stdin_req {
         draw_stdin(frame, req);
@@ -1337,103 +1367,286 @@ fn overlay_reversed(line: &mut Line<'static>, from: usize, to: usize) {
     line.spans = out;
 }
 
+/// Floating panel: clears `area`, draws a rounded border with the title on
+/// top, an optional hint on the bottom edge, and one column of horizontal
+/// padding. Returns the content area.
+fn modal(frame: &mut Frame, area: Rect, title: &str, hint: &str) -> Rect {
+    use ratatui::widgets::{Block, BorderType, Clear, Padding};
+    let dim = Style::new().fg(Color::DarkGray);
+    let mut block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(dim)
+        .padding(Padding::horizontal(1))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ));
+    if !hint.is_empty() {
+        block = block.title_bottom(Line::styled(format!(" {hint} "), dim).right_aligned());
+    }
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    inner
+}
+
+/// A `w`x`h` rect centered in `outer`, clamped to fit.
+fn centered(outer: Rect, w: u16, h: u16) -> Rect {
+    let (w, h) = (w.min(outer.width), h.min(outer.height));
+    Rect {
+        x: outer.x + (outer.width - w) / 2,
+        y: outer.y + (outer.height - h) / 2,
+        width: w,
+        height: h,
+    }
+}
+
 /// Kernel `input()`: a centered modal prompt (all keys already route to it).
 fn draw_stdin(frame: &mut Frame, req: &crate::app::StdinReq) {
-    use ratatui::widgets::{Block, Clear};
     let area = frame.area();
-    let width = area.width.saturating_sub(6).clamp(24, 70).min(area.width);
-    let popup = Rect {
-        x: (area.width - width) / 2,
-        y: area.height.saturating_sub(3) / 2,
-        width,
-        height: 3.min(area.height),
+    let width = area.width.saturating_sub(6).clamp(26, 72);
+    let title = match req.prompt.trim() {
+        "" => "input()",
+        p => p,
     };
+    let inner = modal(
+        frame,
+        centered(area, width, 3),
+        title,
+        "Enter sends · Esc sends empty",
+    );
     let shown: String = if req.password {
         "•".repeat(req.buf.chars().count())
     } else {
         req.buf.clone()
     };
     // keep the tail (and the cursor) inside the box when the input outgrows it
-    let inner = width.saturating_sub(2) as usize;
     let skip = shown
         .chars()
         .count()
-        .saturating_sub(inner.saturating_sub(1));
+        .saturating_sub((inner.width as usize).saturating_sub(1));
     let tail: String = shown.chars().skip(skip).collect();
-    let title = match req.prompt.trim() {
-        "" => " input() — Enter sends, Esc sends empty ".to_string(),
-        p => format!(" {p} "),
-    };
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(tail.as_str()).block(Block::bordered().title(title)),
-        popup,
-    );
-    frame.set_cursor_position((popup.x + 1 + tail.chars().count() as u16, popup.y + 1));
+    frame.set_cursor_position((inner.x + tail.chars().count() as u16, inner.y));
+    frame.render_widget(Paragraph::new(tail), inner);
 }
 
-/// `M`: recent status messages (kernel errors, saves, ...), newest at the
-/// bottom. Any key closes.
-fn draw_history(frame: &mut Frame, history: &[String]) {
-    use ratatui::widgets::{Block, Clear};
+/// `L`: the in-memory log (status messages, kernel lifecycle, warnings from
+/// dependencies), newest at the bottom. `up` = rows scrolled up; clamped here.
+fn draw_logs(frame: &mut Frame, up: &mut usize) {
     let area = frame.area();
-    let width = area.width.saturating_sub(4).clamp(20, 100);
-    let rows = (area.height.saturating_sub(4) as usize).min(history.len().max(1));
-    let text = history
-        .iter()
-        .rev()
-        .take(rows)
-        .rev()
-        .map(|m| Line::raw(m.as_str()))
-        .collect::<Vec<_>>();
-    let popup = Rect {
-        x: (area.width - width) / 2,
-        y: area.height.saturating_sub(rows as u16 + 2) / 2,
-        width,
-        height: rows as u16 + 2,
-    };
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(text).block(Block::bordered().title(" messages (any key closes) ")),
-        popup,
+    let panel = centered(
+        area,
+        area.width.saturating_sub(4).clamp(40, 140),
+        area.height.saturating_sub(2),
     );
+    let rows = panel.height.saturating_sub(2) as usize;
+    let lines: Vec<Line> = crate::log::with_entries(|entries| {
+        *up = (*up).min(entries.len().saturating_sub(rows));
+        let end = entries.len() - *up;
+        entries
+            .range(end.saturating_sub(rows)..end)
+            .map(|e| {
+                let level = match e.level {
+                    log::Level::Error => Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    log::Level::Warn => Style::new().fg(Color::Yellow),
+                    _ => Style::new().fg(Color::Green),
+                };
+                Line::from(vec![
+                    Span::styled(format!("{:>8.2}s ", e.secs), Style::new().fg(Color::DarkGray)),
+                    Span::styled(format!("{:<5} ", e.level), level),
+                    Span::styled(format!("{} ", e.target), Style::new().fg(Color::Blue)),
+                    Span::raw(e.msg.clone()),
+                ])
+            })
+            .collect()
+    });
+    let title = if *up == 0 {
+        "logs".to_string()
+    } else {
+        format!("logs · {} newer below", *up)
+    };
+    let inner = modal(frame, panel, &title, "j/k PgUp/PgDn g/G scroll · any other key closes");
+    if lines.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::styled("(empty)", Style::new().fg(Color::DarkGray))),
+            inner,
+        );
+    } else {
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
 }
 
-const HELP: &str = "\
- j/k g/G      select / first / last cell    5G  goto cell 5
- Enter, i, A  edit cell (vi: hjkl wbe 0$^ ggG x dd yy p u ...)
- Esc          exit editing (normal mode)
- E            edit cell in $EDITOR
- Shift+Enter/r  run + advance  Ctrl+Enter  run
- Ctrl+r       run all          < / >  run all above / cell+below
- a/b          new cell after / before
- dd / p       delete cell / paste it        u  undo cell op
- yy           copy cell source to clipboard
- J/K          move cell down / up
- m            cycle code -> markdown -> latex
- o            hide/show output   [ ]  scroll long output
- z / Z        zoom image fullscreen / toggle native size
- /  n  N      search cell sources / next / previous
- w            save (W: force)    q   quit
- Ctrl+C       interrupt          R   restart kernel
- M            message history
- mouse        click: select/edit, wheel: scroll, Shift+drag: select text";
+/// `D`: debug facts about the selected cell (already on the clipboard).
+fn draw_debug(frame: &mut Frame, text: &str) {
+    let lines: Vec<Line> = text
+        .lines()
+        .map(|l| match l.split_once(": ") {
+            Some((k, v)) if !k.contains(' ') => Line::from(vec![
+                Span::styled(format!("{k}: "), Style::new().fg(Color::Yellow)),
+                Span::raw(v.to_string()),
+            ]),
+            _ => Line::raw(l.to_string()),
+        })
+        .collect();
+    let width = lines.iter().map(Line::width).max().unwrap_or(0) as u16 + 4;
+    let panel = centered(frame.area(), width.max(40), lines.len() as u16 + 2);
+    let inner = modal(frame, panel, "debug · copied to clipboard", "any key closes");
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Help sections: (heading, [(keys, what)]). Keys are space-separated chords.
+const HELP: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Navigate",
+        &[
+            ("j k", "next / previous cell (counts: 3j)"),
+            ("g G", "first / last cell"),
+            ("5G", "go to cell 5"),
+            ("/ n N", "search sources / next / previous"),
+        ],
+    ),
+    (
+        "Edit",
+        &[
+            ("Enter", "edit cell"),
+            ("i A", "edit in insert mode / at the end"),
+            ("Esc", "leave the editor (normal mode)"),
+            ("E", "edit cell in $EDITOR"),
+            ("m", "cycle code → markdown → latex"),
+        ],
+    ),
+    (
+        "Inside the builtin editor",
+        &[
+            ("h j k l w b e", "move (also 0 $ ^ gg G)"),
+            ("i a I A o O", "insert"),
+            ("x D dd yy p P", "delete / yank / put"),
+            ("u Ctrl+r", "undo / redo"),
+        ],
+    ),
+    (
+        "Run",
+        &[
+            ("Shift+Enter r", "run + advance"),
+            ("Ctrl+Enter", "run in place"),
+            ("Ctrl+r", "run all"),
+            ("< >", "run all above / this and below"),
+            ("Ctrl+c", "interrupt kernel"),
+            ("R", "restart kernel"),
+        ],
+    ),
+    (
+        "Cells",
+        &[
+            ("a b", "new cell after / before"),
+            ("dd p", "delete / paste deleted cell"),
+            ("yy", "copy source to clipboard"),
+            ("J K", "move down / up"),
+            ("u", "undo cell operation"),
+        ],
+    ),
+    (
+        "Outputs",
+        &[
+            ("o", "hide / show output"),
+            ("[ ]", "scroll long output"),
+            ("z", "zoom image fullscreen"),
+            ("Z", "toggle native-size images"),
+        ],
+    ),
+    (
+        "File & app",
+        &[
+            ("w W", "save / force save"),
+            ("q", "quit"),
+            ("L", "view logs"),
+            ("D", "debug info for this cell"),
+            ("?", "this help"),
+        ],
+    ),
+    (
+        "Mouse",
+        &[
+            ("click", "select · double-click edits"),
+            ("wheel", "scroll view, or output under it"),
+            ("Shift+drag", "native text selection"),
+        ],
+    ),
+];
+
+/// Width of the key column: the longest chord list.
+const HELP_KEY_W: usize = 15;
+
+fn help_section(title: &str, rows: &[(&str, &str)]) -> Vec<Line<'static>> {
+    let key = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let sep = Style::new().fg(Color::DarkGray);
+    let mut lines = vec![Line::styled(
+        title.to_string(),
+        Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+    )];
+    for (keys, what) in rows {
+        // chords in the key color, the gaps between them dimmed
+        let mut spans = vec![Span::raw("  ")];
+        for (i, k) in keys.split(' ').enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" ", sep));
+            }
+            spans.push(Span::styled(k.to_string(), key));
+        }
+        spans.push(Span::raw(" ".repeat(HELP_KEY_W.saturating_sub(keys.chars().count()))));
+        spans.push(Span::raw(what.to_string()));
+        lines.push(Line::from(spans));
+    }
+    lines.push(Line::raw(""));
+    lines
+}
 
 fn draw_help(frame: &mut Frame) {
-    use ratatui::widgets::{Block, Clear};
-    let lines: u16 = HELP.lines().count() as u16 + 2;
-    let width: u16 = 62.min(frame.area().width);
-    let area = Rect {
-        x: frame.area().width.saturating_sub(width) / 2,
-        y: frame.area().height.saturating_sub(lines) / 2,
-        width,
-        height: lines.min(frame.area().height),
-    };
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(HELP).block(Block::bordered().title(" jOtter 🦦 — keys (any key closes) ")),
-        area,
+    let sections: Vec<Vec<Line>> = HELP.iter().map(|(t, r)| help_section(t, r)).collect();
+    let col_w = sections
+        .iter()
+        .flatten()
+        .map(Line::width)
+        .max()
+        .unwrap_or(0) as u16;
+    let area = frame.area();
+    // two columns when they fit: split where the halves balance by height
+    let two = area.width >= 2 * col_w + 4 + 4;
+    let total: usize = sections.iter().map(Vec::len).sum();
+    let mut split = sections.len();
+    if two {
+        let mut acc = 0;
+        for (i, s) in sections.iter().enumerate() {
+            if acc + s.len() / 2 >= total / 2 {
+                split = i;
+                break;
+            }
+            acc += s.len();
+        }
+    }
+    let (left, right) = sections.split_at(split);
+    let left: Vec<Line> = left.iter().flatten().cloned().collect();
+    let right: Vec<Line> = right.iter().flatten().cloned().collect();
+    let height = left.len().max(right.len()).saturating_sub(1) as u16; // drop trailing blank
+    let width = if two { 2 * col_w + 4 } else { col_w };
+    let inner = modal(
+        frame,
+        centered(area, width + 4, height + 2),
+        "jOtter 🦦 keys",
+        "any key closes",
     );
+    if two {
+        let [l, _, r] = Layout::horizontal([
+            Constraint::Length(col_w),
+            Constraint::Length(4),
+            Constraint::Length(col_w),
+        ])
+        .areas(inner);
+        frame.render_widget(Paragraph::new(left), l);
+        frame.render_widget(Paragraph::new(right), r);
+    } else {
+        frame.render_widget(Paragraph::new(left), inner);
+    }
 }
 
 #[cfg(test)]
@@ -1695,6 +1908,33 @@ mod tests {
                     .collect::<String>()
             })
             .collect()
+    }
+
+    #[test]
+    fn overlays_are_padded_and_help_is_grouped() {
+        let render = |w: u16, h: u16, f: &dyn Fn(&mut Frame)| {
+            let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+            t.draw(|fr| f(fr)).unwrap();
+            buffer_rows(&t)
+        };
+        let rows = render(120, 45, &|f| draw_help(f));
+        let all = rows.join("\n");
+        if std::env::var_os("JOTTER_SHOW").is_some() {
+            println!("{all}");
+            println!("{}", render(100, 14, &|f| draw_debug(f, "jotter 0.1.0\ncell 1/2 · id a1 · code\nrender: src 1 · out 40")).join("\n"));
+        }
+        for (heading, _) in HELP {
+            assert!(all.contains(heading), "section {heading} missing:\n{all}");
+        }
+        assert!(all.contains("Navigate") && all.contains("Mouse"));
+        // two columns at this width: Navigate and Mouse share a row range
+        let row_of = |needle: &str| rows.iter().position(|r| r.contains(needle)).unwrap();
+        assert!(row_of("Mouse") < row_of("Inside the builtin editor") + 20);
+        // padding: no content glyph directly after the left border
+        for r in rows.iter().filter(|r| r.contains('│')) {
+            let after = r.split('│').nth(1).unwrap_or("");
+            assert!(after.starts_with(' '), "unpadded row: {r:?}");
+        }
     }
 
     #[test]

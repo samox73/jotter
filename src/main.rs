@@ -60,9 +60,7 @@ fn leave_extras(enhanced: bool) {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let config_warning = config::init();
-    if let Some(path) = &args.log {
-        log::init(path)?; // bad log path: fail loudly before the alt screen
-    }
+    log::init(args.log.as_deref())?; // bad log path: fail loudly before the alt screen
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
     let mut app = App::open(args.notebook, args.kernel, events_tx)?; // parse errors print before the alt screen
     if let Some(warning) = config_warning {

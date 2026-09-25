@@ -122,9 +122,12 @@ pub struct App {
     undo_stack: Vec<UndoOp>,
     /// Numeric count prefix (`5G`, `3j`).
     count: Option<usize>,
-    /// Every status message shown this session (M opens the overlay).
-    pub history: Vec<String>,
-    pub show_history: bool,
+    /// Last status message sent to the log (ui::draw logs each one once).
+    pub logged_status: Option<String>,
+    /// `L` log viewer: Some(rows scrolled up from the newest entry).
+    pub logs: Option<usize>,
+    /// `D` debug overlay text (also copied to the clipboard).
+    pub debug: Option<String>,
     /// `z`: fullscreen image overlay (any key closes).
     pub zoom: Option<ratatui_image::sliced::SlicedProtocol>,
     /// Wheel-gesture latch: ticks in one burst keep their initial target even
@@ -134,6 +137,16 @@ pub struct App {
 
 fn mtime(path: &std::path::Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// Copy `text` to the system clipboard via OSC 52 (works over ssh/tmux).
+fn osc52(text: &str) {
+    use base64::Engine;
+    use std::io::Write;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+    let mut out = std::io::stdout();
+    let _ = write!(out, "\x1b]52;c;{b64}\x07");
+    let _ = out.flush();
 }
 
 fn new_code_cell() -> Cell {
@@ -202,8 +215,9 @@ impl App {
             stdin_req: None,
             undo_stack: Vec::new(),
             count: None,
-            history: Vec::new(),
-            show_history: false,
+            logged_status: None,
+            logs: None,
+            debug: None,
             zoom: None,
             wheel_latch: None,
         };
@@ -328,7 +342,15 @@ impl App {
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent, rendered: &mut Rendered) {
-        if self.zoom.is_some() {
+        if let Some(up) = &mut self.logs {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => *up += 3,
+                MouseEventKind::ScrollDown => *up = up.saturating_sub(3),
+                _ => {}
+            }
+            return;
+        }
+        if self.zoom.is_some() || self.show_help || self.debug.is_some() {
             return; // overlay owns the screen; keys close it
         }
         match mouse.kind {
@@ -452,9 +474,27 @@ impl App {
     pub fn on_key(&mut self, key: KeyEvent, rendered: &mut Rendered) -> Action {
         self.message = None;
         self.manual_scroll = false; // keyboard nav re-follows the selection
-        if self.show_help || self.show_history || self.zoom.is_some() {
+        if let Some(up) = &mut self.logs {
+            // scroll keys move through the log; anything else closes it
+            // (draw clamps `up` to the entry count)
+            let page = (self.body.height as usize / 2).max(1);
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            match key.code {
+                KeyCode::Char('k') | KeyCode::Up => *up += 1,
+                KeyCode::Char('j') | KeyCode::Down => *up = up.saturating_sub(1),
+                KeyCode::Char('u') if ctrl => *up += page,
+                KeyCode::Char('d') if ctrl => *up = up.saturating_sub(page),
+                KeyCode::PageUp => *up += page,
+                KeyCode::PageDown => *up = up.saturating_sub(page),
+                KeyCode::Char('g') | KeyCode::Home => *up = usize::MAX,
+                KeyCode::Char('G') | KeyCode::End => *up = 0,
+                _ => self.logs = None,
+            }
+            return Action::None;
+        }
+        if self.show_help || self.debug.is_some() || self.zoom.is_some() {
             self.show_help = false;
-            self.show_history = false;
+            self.debug = None;
             self.zoom = None;
             return Action::None;
         }
@@ -790,7 +830,14 @@ impl App {
                     self.spawn_kernel();
                 }
                 KeyCode::Char('?') => self.show_help = true,
-                KeyCode::Char('M') => self.show_history = true,
+                KeyCode::Char('L') => self.logs = Some(0),
+                KeyCode::Char('D') => {
+                    let text = self.debug_report(rendered);
+                    log::info!(target: "debug", "{}", text.replace('\n', " | "));
+                    osc52(&text);
+                    self.debug = Some(text);
+                    self.message = Some("debug info copied to clipboard".into());
+                }
                 KeyCode::Char('z') => {
                     self.zoom = self
                         .notebook
@@ -1043,16 +1090,113 @@ impl App {
 
     /// Copy the selected cell's source to the system clipboard via OSC 52.
     fn yank_to_clipboard(&mut self) {
-        use base64::Engine;
-        use std::io::Write;
         let Some(cell) = self.notebook.cells.get(self.selected) else {
             return;
         };
-        let b64 = base64::engine::general_purpose::STANDARD.encode(cell.source.as_bytes());
-        let mut out = std::io::stdout();
-        let _ = write!(out, "\x1b]52;c;{b64}\x07");
-        let _ = out.flush();
+        osc52(&cell.source);
         self.message = Some("cell source copied to clipboard".into());
+    }
+
+    /// `D`: everything about the selected cell that helps pin down a bug
+    /// report — identity, model, render/viewport state, execution, kernel.
+    fn debug_report(&self, rendered: &Rendered) -> String {
+        let mut out = format!("jotter {}\n", env!("CARGO_PKG_VERSION"));
+        match self.notebook.cells.get(self.selected) {
+            Some(cell) => {
+                let id = cell.extra.get("id").and_then(Value::as_str).unwrap_or("-");
+                let count = cell
+                    .execution_count()
+                    .map_or("-".to_string(), |n| n.to_string());
+                out += &format!(
+                    "cell {}/{} · id {id} · {} · execution_count {count}\n",
+                    self.selected + 1,
+                    self.notebook.cells.len(),
+                    cell.cell_type,
+                );
+                out += &format!(
+                    "source: {} lines, {} chars\n",
+                    cell.source.split('\n').count(),
+                    cell.source.chars().count()
+                );
+                let outputs: Vec<String> = cell
+                    .outputs
+                    .iter()
+                    .flatten()
+                    .map(|o| {
+                        let ty = o["output_type"].as_str().unwrap_or("?");
+                        match ty {
+                            "stream" => format!(
+                                "stream:{} ({} lines)",
+                                o["name"].as_str().unwrap_or("?"),
+                                crate::notebook::join_multiline(&o["text"]).lines().count()
+                            ),
+                            "error" => format!("error:{}", o["ename"].as_str().unwrap_or("?")),
+                            _ => {
+                                let mimes = o["data"]
+                                    .as_object()
+                                    .map(|d| d.keys().cloned().collect::<Vec<_>>().join(","));
+                                format!("{ty}[{}]", mimes.unwrap_or_default())
+                            }
+                        }
+                    })
+                    .collect();
+                out += &format!("outputs ({}): {}\n", outputs.len(), outputs.join(" · "));
+                if let Some(b) = rendered.blocks.get(self.selected) {
+                    out += &format!("render: {}\n", b.debug_summary());
+                }
+                let runs: Vec<String> = self
+                    .running
+                    .iter()
+                    .filter(|&(_, &c)| c == self.selected)
+                    .map(|(m, _)| {
+                        let state = if self.started.contains_key(m) {
+                            "running"
+                        } else {
+                            "queued"
+                        };
+                        let half = if self.half_done.contains(m) { ", half-done" } else { "" };
+                        format!("{state}{half} msg {m}")
+                    })
+                    .collect();
+                out += &format!(
+                    "exec: {}\n",
+                    if runs.is_empty() { "idle".into() } else { runs.join(" · ") }
+                );
+            }
+            None => out += "no cell selected (empty notebook)\n",
+        }
+        out += &format!(
+            "view: scroll {} of {} lines{} · body {}x{}\n",
+            self.scroll,
+            self.content_lines,
+            if self.manual_scroll { " (manual)" } else { "" },
+            self.body.width,
+            self.body.height
+        );
+        out += &match &self.kernel {
+            Some(k) => format!(
+                "kernel: {} ({}) · {} · {} in flight\n",
+                k.name,
+                k.spec_dir.display(),
+                if self.kernel_busy { "busy" } else { "idle" },
+                self.running.len()
+            ),
+            None => format!("kernel: none (requested '{}')\n", self.kernel_name),
+        };
+        out += &format!(
+            "editor: {} · graphics: {}\n",
+            match &self.editor {
+                None => "closed".to_string(),
+                Some(e) => format!(
+                    "{} {:?} cursor {:?}",
+                    if e.is_builtin() { "builtin" } else { "nvim" },
+                    e.mode(),
+                    e.cursor()
+                ),
+            },
+            rendered.graphics_summary()
+        );
+        out.trim_end().to_string()
     }
 
     /// Drop all in-flight execution bookkeeping (restart, death, reload).
@@ -1110,6 +1254,11 @@ impl App {
             return;
         };
         cell.outputs = Some(Vec::new());
+        // a fresh run follows its tail, even if the previous output had been
+        // scrolled up (rebuild_cell preserves the viewport across rebuilds)
+        if let Some(b) = rendered.blocks.get_mut(idx) {
+            b.out_scroll = usize::MAX;
+        }
         let msg_id = kernel.execute(cell.source.clone());
         rendered.rebuild_cell(idx, cell);
         self.running.insert(msg_id, idx);
