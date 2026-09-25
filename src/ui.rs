@@ -4,8 +4,8 @@
 //! into blank placeholder lines reserved in the text flow.
 
 use crate::app::App;
-use crate::editor::Mode as EdMode;
 use crate::notebook::{Cell, Notebook, join_multiline};
+use crate::nvim::ModeKind;
 use ansi_to_tui::IntoText;
 use base64::Engine;
 use ratatui::Frame;
@@ -973,7 +973,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         (Some(ed), Some(cell)) => rendered.highlight(&ed.source(), cell_ext(cell)),
         _ => Vec::new(),
     };
-    let editor_rows = app.editor.as_ref().map_or(0, |e| e.lines.len());
+    let editor_rows = app.editor.as_ref().map_or(0, |e| e.line_count());
+    // visual-mode selection (nvim backend), applied as an overlay on the
+    // highlighted source spans of the editing cell
+    let visual = app.editor.as_ref().and_then(|e| e.visual());
 
     // Layout pass: per-cell displayed shape and start lines — no clones.
     // Body = source rows + a window onto the output (+ footer when clipped).
@@ -1019,7 +1022,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     if app.manual_scroll || starts.is_empty() {
         app.scroll = app.scroll.min(total.saturating_sub(1));
     } else if let Some(editor) = &app.editor {
-        let cur = starts[app.selected] + 1 + editor.cursor.0;
+        let cur = starts[app.selected] + 1 + editor.cursor().0;
         if cur >= app.scroll + height {
             app.scroll = cur + 1 - height;
         }
@@ -1066,10 +1069,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         } else if local <= v.src {
             let b = local - 1;
             let line = if editing {
-                editor_lines
+                let mut l = editor_lines
                     .get(b)
                     .cloned()
-                    .unwrap_or_else(|| Line::raw(""))
+                    .unwrap_or_else(|| Line::raw(""));
+                if let Some((kind, anchor, cursor)) = visual
+                    && let Some((from, to)) = sel_range(kind, anchor, cursor, b, line_chars(&l))
+                {
+                    overlay_reversed(&mut l, from, to);
+                }
+                l
             } else {
                 block.lines[b].clone()
             };
@@ -1178,19 +1187,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
 
     // Editor cursor: real terminal cursor at the edit position.
     if let Some(editor) = &app.editor {
-        let abs = starts[app.selected] + 1 + editor.cursor.0;
+        let (crow, ccol) = editor.cursor();
+        let abs = starts[app.selected] + 1 + crow;
         if abs >= app.scroll && ((abs - app.scroll) as u16) < body.height {
             frame.set_cursor_position((
-                body.x + (editor.cursor.1 as u16).min(body.width.saturating_sub(1)),
+                body.x + (ccol as u16).min(body.width.saturating_sub(1)),
                 body.y + (abs - app.scroll) as u16,
             ));
         }
     }
 
-    let (mode_label, mode_bg) = match &app.editor {
+    let (mode_label, mode_bg) = match app.editor.as_ref().map(|e| e.mode()) {
         None => (" VIEW ", Color::Cyan),
-        Some(e) if e.mode == EdMode::Insert => (" INSERT ", Color::Green),
-        Some(_) => (" NORMAL ", Color::Yellow),
+        Some(ModeKind::Insert) => (" INSERT ", Color::Green),
+        Some(ModeKind::Visual) => (" VISUAL ", Color::Magenta),
+        Some(ModeKind::VisualLine) => (" V-LINE ", Color::Magenta),
+        Some(ModeKind::VisualBlock) => (" V-BLOCK ", Color::Magenta),
+        Some(ModeKind::Replace) => (" REPLACE ", Color::Red),
+        Some(ModeKind::Pending) => (" O-PEND ", Color::Yellow),
+        Some(ModeKind::Cmdline) => (" CMD ", Color::Yellow),
+        Some(ModeKind::Normal) => (" NORMAL ", Color::Yellow),
     };
     let kernel_state = if app.kernel.is_none() {
         Span::styled("◌ no kernel", Style::new().fg(Color::DarkGray))
@@ -1199,9 +1215,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     } else {
         Span::styled("○ idle", Style::new().fg(Color::Green))
     };
-    // rightmost slot: the search prompt beats the one-shot message
+    // rightmost slot: search prompt, then nvim's cmdline, then the message
     let tail = if let Some(q) = &app.search_input {
         format!("/{q}▏")
+    } else if let Some(c) = app.editor.as_ref().and_then(|e| e.cmdline()) {
+        format!("{c}▏")
     } else {
         app.message.clone().unwrap_or_default()
     };
@@ -1245,6 +1263,78 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     if let Some(req) = &app.stdin_req {
         draw_stdin(frame, req);
     }
+}
+
+fn line_chars(line: &Line) -> usize {
+    line.spans.iter().map(|s| s.content.chars().count()).sum()
+}
+
+/// Char-column range (inclusive) of `row`'s visual selection, if any.
+/// Anchor/cursor are (row, col) in chars; vim selections include the cursor.
+fn sel_range(
+    kind: ModeKind,
+    anchor: (usize, usize),
+    cursor: (usize, usize),
+    row: usize,
+    len: usize,
+) -> Option<(usize, usize)> {
+    let (lo, hi) = if anchor <= cursor {
+        (anchor, cursor)
+    } else {
+        (cursor, anchor)
+    };
+    if row < lo.0 || row > hi.0 {
+        return None;
+    }
+    let eol = len.saturating_sub(1);
+    match kind {
+        ModeKind::VisualLine => Some((0, eol)),
+        ModeKind::VisualBlock => Some((lo.1.min(hi.1), lo.1.max(hi.1))),
+        ModeKind::Visual => Some((
+            if row == lo.0 { lo.1 } else { 0 },
+            if row == hi.0 { hi.1 } else { eol },
+        )),
+        _ => None,
+    }
+}
+
+/// Restyle chars [from..=to] of a highlighted line as REVERSED, splitting
+/// spans at the boundaries.
+fn overlay_reversed(line: &mut Line<'static>, from: usize, to: usize) {
+    if line_chars(line) == 0 {
+        // empty line inside a selection: show one reversed cell
+        line.spans = vec![Span::styled(
+            " ",
+            Style::new().add_modifier(Modifier::REVERSED),
+        )];
+        return;
+    }
+    let byte_at = |s: &str, ci: usize| s.char_indices().nth(ci).map_or(s.len(), |(b, _)| b);
+    let mut out: Vec<Span<'static>> = Vec::with_capacity(line.spans.len() + 2);
+    let mut pos = 0usize; // char position across the whole line
+    for span in line.spans.drain(..) {
+        let len = span.content.chars().count();
+        let (s0, s1) = (pos, pos + len);
+        pos = s1;
+        if s1 <= from || s0 > to || len == 0 {
+            out.push(span);
+            continue;
+        }
+        let a = byte_at(&span.content, from.saturating_sub(s0));
+        let b = byte_at(&span.content, (to + 1 - s0).min(len));
+        let text = span.content.to_string();
+        if a > 0 {
+            out.push(Span::styled(text[..a].to_string(), span.style));
+        }
+        out.push(Span::styled(
+            text[a..b].to_string(),
+            span.style.add_modifier(Modifier::REVERSED),
+        ));
+        if b < text.len() {
+            out.push(Span::styled(text[b..].to_string(), span.style));
+        }
+    }
+    line.spans = out;
 }
 
 /// Kernel `input()`: a centered modal prompt (all keys already route to it).
@@ -1355,6 +1445,50 @@ mod tests {
 
     // 1x1 transparent png
     const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=";
+
+    #[test]
+    fn visual_selection_ranges() {
+        use ModeKind::*;
+        // charwise, anchor below/after cursor (selection is direction-free)
+        assert_eq!(sel_range(Visual, (1, 4), (0, 2), 0, 10), Some((2, 9)));
+        assert_eq!(sel_range(Visual, (1, 4), (0, 2), 1, 10), Some((0, 4)));
+        assert_eq!(sel_range(Visual, (0, 4), (0, 2), 0, 10), Some((2, 4)));
+        assert_eq!(sel_range(Visual, (0, 0), (0, 0), 3, 5), None);
+        // linewise: whole line for every row in range
+        assert_eq!(sel_range(VisualLine, (0, 3), (2, 0), 1, 7), Some((0, 6)));
+        // blockwise: same col range on every row
+        assert_eq!(sel_range(VisualBlock, (0, 5), (2, 2), 1, 10), Some((2, 5)));
+        assert_eq!(sel_range(Normal, (0, 0), (2, 0), 1, 5), None);
+    }
+
+    #[test]
+    fn overlay_splits_spans_at_selection_bounds() {
+        let mut line = Line::from(vec![Span::raw("abc"), Span::raw("def")]);
+        overlay_reversed(&mut line, 2, 4); // "c" + "de"
+        let flags: Vec<(String, bool)> = line
+            .spans
+            .iter()
+            .map(|s| {
+                (
+                    s.content.to_string(),
+                    s.style.add_modifier.contains(Modifier::REVERSED),
+                )
+            })
+            .collect();
+        assert_eq!(
+            flags,
+            [
+                ("ab".into(), false),
+                ("c".into(), true),
+                ("de".into(), true),
+                ("f".into(), false)
+            ]
+        );
+        // empty line inside a linewise selection still shows a mark
+        let mut empty = Line::raw("");
+        overlay_reversed(&mut empty, 0, 0);
+        assert_eq!(line_chars(&empty), 1);
+    }
 
     #[test]
     fn try_image_steps() {

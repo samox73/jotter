@@ -18,7 +18,7 @@ Open, edit, and run real `.ipynb` notebooks in your terminal with vim keys, inli
 
 - **Real nbformat**: opens and saves `.ipynb` losslessly — cell ids, metadata, and fields written by other tools survive round-trips untouched.
 - **Fast**: single-digit-microsecond redraws (Rust + [ratatui](https://ratatui.rs)); cell bodies are cached and rebuilt per cell, never per keystroke.
-- **Vi editing**: modal editor inside cells (`hjkl`, `w b e`, `dd yy p`, `u`/`Ctrl+r`, ...), with modal cursor shapes, and `E` to open the cell in `$EDITOR` for anything heavier.
+- **Vi editing**: modal editor inside cells (`hjkl`, `w b e`, `dd yy p`, `u`/`Ctrl+r`, ...), with modal cursor shapes, and `E` to open the cell in `$EDITOR` for anything heavier. Or set `editor = "nvim"` to let an embedded nvim drive cell editing — the full modal engine (operators, visual mode, registers, macros) with jotter still rendering.
 - **Kernel execution**: launches any Jupyter kernelspec over ZMQ, streams outputs live, interrupt with `Ctrl+C`, restart with `R`. Kernel cwd is the notebook's directory, like jupyterlab.
 - **Kernel resolution ladder**: activated env (`$VIRTUAL_ENV`, `$CONDA_PREFIX`) → `.venv`/`venv` beside the notebook → the notebook's kernelspec → global kernels → `python3` fallback. Works with uv, poetry, conda, pixi — anything that installs `ipykernel`.
 - **Inline graphics**: matplotlib PNGs render in-terminal via the kitty graphics protocol (sixel/iTerm2/halfblocks fallback through [ratatui-image](https://github.com/benjajaja/ratatui-image)).
@@ -75,7 +75,10 @@ max_image_rows = 18     # images taller than this are downscaled once (Lanczos)
 max_output_rows = 15    # output rows shown before the viewport scrolls
 autosave_secs = 30      # autosave sidecar interval
 theme = "base16-ocean.dark"  # try base16-ocean.light on light terminals
+editor = "builtin"      # "nvim": embedded nvim drives cell editing (experimental)
 ```
+
+With `editor = "nvim"`, a hidden `nvim --embed` owns the cell buffer while jotter keeps rendering: full modal editing (`dw`, `ciw`, visual mode, counts, registers, macros, `.`), per-cell undo history, `:`/`/` echoed in the status bar, `:w` commits the cell, and `:q`/`:wq`/`ZZ` leave it (`:q!`/`ZQ` discard the edit). Falls back to the builtin editor if nvim is missing or dies.
 
 ## Known limits
 

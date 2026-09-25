@@ -18,6 +18,11 @@ pub struct Config {
     /// base16-eighties.dark, base16-mocha.dark, InspiredGitHub,
     /// Solarized (dark), Solarized (light).
     pub theme: String,
+    /// Cell editor backend: "builtin" (default), or "nvim" — an embedded
+    /// `nvim --embed` owns text/mode/registers (experimental; full modal
+    /// editing: dw, ciw, visual mode, counts, macros, `.`). Falls back to
+    /// builtin when nvim is missing or dies.
+    pub editor: String,
 }
 
 impl Default for Config {
@@ -27,6 +32,7 @@ impl Default for Config {
             max_output_rows: 15,
             autosave_secs: 30,
             theme: "base16-ocean.dark".into(),
+            editor: "builtin".into(),
         }
     }
 }

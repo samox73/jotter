@@ -5,6 +5,7 @@ mod kernel;
 mod latex;
 mod log;
 mod notebook;
+mod nvim;
 mod ui;
 
 use anyhow::Result;
@@ -105,18 +106,19 @@ async fn run(
     enhanced: bool,
 ) -> Result<()> {
     let mut term_events = EventStream::new();
-    let mut cursor_mode: Option<editor::Mode> = None;
+    let mut cursor_mode: Option<nvim::ModeKind> = None;
     // Autosave sidecar tick; writes only when something changed since last time.
     let mut autosave = tokio::time::interval(std::time::Duration::from_secs(
         config::get().autosave_secs.max(1),
     ));
     while !app.should_quit {
-        // modal cursor shape: block in normal, bar in insert
-        let mode = app.editor.as_ref().map(|e| e.mode);
+        // modal cursor shape: block in normal, bar in insert, underline in replace
+        let mode = app.editor.as_ref().map(|e| e.mode());
         if mode != cursor_mode {
             let style = match mode {
-                Some(editor::Mode::Insert) => SetCursorStyle::SteadyBar,
-                Some(editor::Mode::Normal) => SetCursorStyle::SteadyBlock,
+                Some(nvim::ModeKind::Insert) => SetCursorStyle::SteadyBar,
+                Some(nvim::ModeKind::Replace) => SetCursorStyle::SteadyUnderScore,
+                Some(_) => SetCursorStyle::SteadyBlock,
                 None => SetCursorStyle::DefaultUserShape,
             };
             let _ = crossterm::execute!(std::io::stdout(), style);

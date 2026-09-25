@@ -1,5 +1,6 @@
-use crate::editor::{Editor, Mode as EdMode, Outcome};
+use crate::editor::{Editor, Outcome};
 use crate::kernel::{Event, Kernel};
+use crate::nvim::{Backend, ModeKind, NvimCell, NvimSession};
 use crate::notebook::{Cell, Notebook};
 use crate::ui::Rendered;
 use anyhow::Result;
@@ -73,7 +74,10 @@ pub struct App {
     pub running: HashMap<String, usize>,
     pub dirty: bool,
     /// Some(_) while a cell is being edited.
-    pub editor: Option<Editor>,
+    pub editor: Option<Backend>,
+    /// Embedded nvim (editor = "nvim"), spawned lazily on first cell edit and
+    /// parked here between edits so per-cell buffers keep their undo history.
+    nvim: Option<NvimSession>,
     /// Line -> cell mapping of the last draw (mouse support).
     pub hit: Vec<Hit>,
     /// Notebook body area of the last draw.
@@ -167,6 +171,7 @@ impl App {
             running: HashMap::new(),
             dirty: false,
             editor: None,
+            nvim: None,
             hit: Vec::new(),
             body: Rect::default(),
             manual_scroll: false,
@@ -258,7 +263,11 @@ impl App {
     fn reload(&mut self, rendered: &mut Rendered) -> Result<()> {
         self.notebook = Notebook::open(&self.path)?;
         rendered.rebuild_all(&self.notebook);
-        self.editor = None;
+        if let Some(ed) = self.editor.take()
+            && let Some(s) = ed.into_session()
+        {
+            self.nvim = Some(s);
+        }
         self.selected = self
             .selected
             .min(self.notebook.cells.len().saturating_sub(1));
@@ -418,7 +427,8 @@ impl App {
                         let Some(cell) = self.notebook.cells.get(self.selected) else {
                             return;
                         };
-                        let mut editor = Editor::new(&cell.source);
+                        let source = cell.source.clone();
+                        let mut editor = self.make_backend(&source);
                         editor.click(row, col, double);
                         self.editor = Some(editor);
                     }
@@ -557,9 +567,11 @@ impl App {
 
     fn on_key_edit(&mut self, key: KeyEvent, rendered: &mut Rendered) {
         let editor = self.editor.as_mut().unwrap();
-        // `q` is unbound in the cell editor and is almost always quit-intent
-        // from someone who forgot they're inside the cell: say so.
-        if editor.mode == EdMode::Normal
+        // `q` is unbound in the builtin editor and is almost always quit-intent
+        // from someone who forgot they're inside the cell: say so. (With the
+        // nvim backend q is real macro recording and forwards.)
+        if editor.is_builtin()
+            && editor.mode() == ModeKind::Normal
             && key.code == KeyCode::Char('q')
             && key.modifiers.is_empty()
         {
@@ -567,7 +579,43 @@ impl App {
                 Some("editing cell — Esc exits the editor; then q quits, w saves".into());
             return;
         }
-        let outcome = editor.input(key);
+        let outcome = match editor.input(key) {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                // nvim died mid-edit: salvage the text into the builtin editor
+                let source = editor.source();
+                if editor.take_write_request() {
+                    self.update_cell_source(source.clone(), rendered); // honor a final :wq
+                }
+                self.editor = Some(Backend::Builtin(Editor::new(&source)));
+                self.message = Some(format!("nvim backend lost ({e:#}) — builtin editor"));
+                return;
+            }
+        };
+        // :w inside the cell (BufWriteCmd hook): commit but keep editing
+        if let Some(editor) = &mut self.editor
+            && editor.take_write_request()
+        {
+            let source = editor.source();
+            self.update_cell_source(source, rendered);
+        }
+        // :q/:wq/ZZ/... inside nvim: leave the cell instead of exiting nvim
+        if let Some(editor) = &mut self.editor
+            && let Some(discard) = editor.take_quit_request()
+        {
+            if discard {
+                // :q!/ZQ — no commit; reclaim the session, buffer resyncs on reopen
+                if let Some(ed) = self.editor.take()
+                    && let Some(s) = ed.into_session()
+                {
+                    self.nvim = Some(s);
+                }
+                self.message = Some("cell edit discarded".into());
+            } else {
+                self.commit_editor(rendered);
+            }
+            return;
+        }
         match outcome {
             Outcome::Continue => {}
             Outcome::Exit => self.commit_editor(rendered),
@@ -586,8 +634,19 @@ impl App {
         let Some(editor) = self.editor.take() else {
             return;
         };
-        let cell = &mut self.notebook.cells[self.selected];
         let source = editor.source();
+        if let Some(session) = editor.into_session() {
+            self.nvim = Some(session); // per-cell buffers survive across edits
+        }
+        self.update_cell_source(source, rendered);
+    }
+
+    /// Write `source` into the selected cell (undo-tracked, re-rendered);
+    /// editor state untouched.
+    fn update_cell_source(&mut self, source: String, rendered: &mut Rendered) {
+        let Some(cell) = self.notebook.cells.get_mut(self.selected) else {
+            return;
+        };
         if source != cell.source {
             let prior = cell.clone();
             cell.source = source;
@@ -759,27 +818,61 @@ impl App {
         let Some(cell) = self.notebook.cells.get(self.selected) else {
             return;
         };
-        let mut editor = Editor::new(&cell.source);
+        let source = cell.source.clone();
+        let mut editor = self.make_backend(&source);
         if insert {
             let _ = editor.input(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
         }
         self.editor = Some(editor);
     }
 
+    /// Editor backend per config; any nvim failure falls back to the builtin
+    /// with a status message, so editing always works.
+    fn make_backend(&mut self, source: &str) -> Backend {
+        if crate::config::get().editor != "nvim" {
+            return Backend::Builtin(Editor::new(source));
+        }
+        let key = self.cell_key();
+        let existing = self.nvim.take();
+        let had_existing = existing.is_some();
+        let opened = existing
+            .map(Ok)
+            .unwrap_or_else(NvimSession::spawn)
+            .and_then(|s| NvimCell::open(s, &key, source));
+        let opened = match opened {
+            // parked session died in the background: one respawn attempt
+            Err(_) if had_existing => {
+                NvimSession::spawn().and_then(|s| NvimCell::open(s, &key, source))
+            }
+            other => other,
+        };
+        match opened {
+            Ok(cell) => Backend::Nvim(cell),
+            Err(e) => {
+                self.message = Some(format!("nvim unavailable ({e:#}) — builtin editor"));
+                Backend::Builtin(Editor::new(source))
+            }
+        }
+    }
+
+    /// Per-cell nvim buffer key: the nbformat cell id. ponytail: cells without
+    /// one (pre-4.5 files) get a positional key — wrong after moves, but that
+    /// only costs undo continuity, never text.
+    fn cell_key(&self) -> String {
+        self.notebook
+            .cells
+            .get(self.selected)
+            .and_then(|c| c.extra.get("id"))
+            .and_then(|v| v.as_str())
+            .map(|id| format!("id-{id}"))
+            .unwrap_or_else(|| format!("pos-{}", self.selected))
+    }
+
     /// Called by main after $EDITOR closed; applies the edited source.
     pub fn apply_external_edit(&mut self, source: String, rendered: &mut Rendered) {
-        let Some(cell) = self.notebook.cells.get_mut(self.selected) else {
-            return;
-        };
         // editors write a trailing newline; cell sources don't carry one
         let source = source.strip_suffix('\n').unwrap_or(&source).to_string();
-        if source != cell.source {
-            let prior = cell.clone();
-            cell.source = source;
-            rendered.rebuild_cell(self.selected, cell);
-            self.push_undo(UndoOp::Replaced(self.selected, Box::new(prior)));
-            self.touch();
-        }
+        self.update_cell_source(source, rendered);
     }
 
     fn push_undo(&mut self, op: UndoOp) {

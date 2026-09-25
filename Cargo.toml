@@ -23,6 +23,7 @@ ratex-parser = "0.1.11"
 ratex-svg = { version = "0.1.11", features = ["embed-fonts"] }
 ratex-types = "0.1.11"
 resvg = "0.47"
+rmpv = "1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 syntect = "5.3.0"
