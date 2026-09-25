@@ -70,7 +70,10 @@ pub struct Wrapped {
 impl Wrapped {
     /// Row + in-row display column of display column `x` on logical `line`.
     fn locate(&self, line: usize, x: usize) -> (usize, usize) {
-        let (a, b) = (self.first_row[line], self.first_row[line + 1].max(self.first_row[line] + 1));
+        let (a, b) = (
+            self.first_row[line],
+            self.first_row[line + 1].max(self.first_row[line] + 1),
+        );
         let r = (a..b.min(self.origin.len()))
             .rev()
             .find(|&r| self.origin[r].x <= x)
@@ -81,7 +84,10 @@ impl Wrapped {
     /// Row holding char `col` of logical `line`, and that row's first char.
     fn row_of_char(&self, line: usize, col: usize) -> (usize, usize) {
         let (a, b) = (self.first_row[line], self.first_row[line + 1]);
-        let r = (a..b).rev().find(|&r| self.origin[r].col <= col).unwrap_or(a);
+        let r = (a..b)
+            .rev()
+            .find(|&r| self.origin[r].col <= col)
+            .unwrap_or(a);
         (r, self.origin.get(r).map_or(0, |o| o.col))
     }
 }
@@ -101,7 +107,11 @@ pub fn wrap_lines(lines: &[Line<'static>], width: u16) -> Wrapped {
         out.first_row.push(out.rows.len());
         if w == 0 || line.width() <= w {
             out.rows.push(line.clone());
-            out.origin.push(RowOrigin { line: li, col: 0, x: 0 });
+            out.origin.push(RowOrigin {
+                line: li,
+                col: 0,
+                x: 0,
+            });
             continue;
         }
         let chars: Vec<(char, Style)> = line
@@ -118,7 +128,10 @@ pub fn wrap_lines(lines: &[Line<'static>], width: u16) -> Wrapped {
                 i += 1;
                 continue;
             }
-            let j = i + chars[i..].iter().position(|(c, _)| *c == ' ').unwrap_or(chars.len() - i);
+            let j = i + chars[i..]
+                .iter()
+                .position(|(c, _)| *c == ' ')
+                .unwrap_or(chars.len() - i);
             let word: usize = cw[i..j].iter().sum();
             if row_w + word <= w {
                 row_w += word;
@@ -184,7 +197,11 @@ impl CellBlock {
     /// outputs use the full width. No-op when already wrapped for it.
     fn rewrap(&mut self, width: u16) {
         if self.wrap.width != width || self.wrap.first_row.len() != self.lines.len() + 1 {
-            let src_w = if width == 0 { 0 } else { width.saturating_sub(GUTTER).max(1) };
+            let src_w = if width == 0 {
+                0
+            } else {
+                width.saturating_sub(GUTTER).max(1)
+            };
             let (src, out) = self.lines.split_at(self.src_lines);
             let mut w = wrap_lines(src, src_w);
             let o = wrap_lines(out, width);
@@ -279,7 +296,11 @@ impl CellBlock {
             self.images.len(),
             self.wrap.width,
             if self.collapsed { " · collapsed" } else { "" },
-            if self.full_images { " · native-size" } else { "" },
+            if self.full_images {
+                " · native-size"
+            } else {
+                ""
+            },
         )
     }
 }
@@ -675,7 +696,11 @@ impl Rendered {
             let t = raw.trim();
             if let Some((lang, buf)) = &mut fence {
                 if t.starts_with("```") {
-                    let lang = if lang.is_empty() { self.lang.as_str() } else { lang.as_str() };
+                    let lang = if lang.is_empty() {
+                        self.lang.as_str()
+                    } else {
+                        lang.as_str()
+                    };
                     let body = self.highlight(buf, lang);
                     src_map.extend(i - body.len()..i); // fence body maps 1:1
                     lines.extend(body);
@@ -1410,7 +1435,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
                 .iter()
                 .find_map(|(m, &c)| (c == ci).then(|| app.started.contains_key(m)));
             (
-                header_line(cell, ci == app.selected, run, editing, block.elapsed, body.width),
+                header_line(
+                    cell,
+                    ci == app.selected,
+                    run,
+                    editing,
+                    block.elapsed,
+                    body.width,
+                ),
                 HitKind::Other,
             )
         } else if local <= v.src {
@@ -1612,7 +1644,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         // align the popup's text with the token start (the live completer's
         // `.attr` matches display without the dot)
         let (start, end) = c.span();
-        let typed: String = editor_src.chars().skip(start).take(end.saturating_sub(start)).collect();
+        let typed: String = editor_src
+            .chars()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .collect();
         let typed_w = typed.trim_start_matches('.').width() as u16;
         draw_completion(frame, c, at, typed_w, body, &rendered.panel());
     }
@@ -1792,7 +1828,10 @@ fn draw_logs(frame: &mut Frame, up: &mut usize) {
                     _ => Style::new().fg(Color::Green),
                 };
                 Line::from(vec![
-                    Span::styled(format!("{:>8.2}s ", e.secs), Style::new().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("{:>8.2}s ", e.secs),
+                        Style::new().fg(Color::DarkGray),
+                    ),
                     Span::styled(format!("{:<5} ", e.level), level),
                     Span::styled(format!("{} ", e.target), Style::new().fg(Color::Blue)),
                     Span::raw(e.msg.clone()),
@@ -1805,7 +1844,12 @@ fn draw_logs(frame: &mut Frame, up: &mut usize) {
     } else {
         format!("logs · {} newer below", *up)
     };
-    let inner = modal(frame, panel, &title, "j/k PgUp/PgDn g/G scroll · any other key closes");
+    let inner = modal(
+        frame,
+        panel,
+        &title,
+        "j/k PgUp/PgDn g/G scroll · any other key closes",
+    );
     if lines.is_empty() {
         frame.render_widget(
             Paragraph::new(Line::styled("(empty)", Style::new().fg(Color::DarkGray))),
@@ -1923,8 +1967,19 @@ fn draw_completion(
     c.top = scroll_window(c.top, c.sel, shown, c.items.len());
     let scrollbar = c.items.len() > shown;
     // column widths over all items (stable while scrolling)
-    let name_w = c.items.iter().map(|i| i.label().width()).max().unwrap_or(0).min(MAX_NAME);
-    let kind_w = c.items.iter().map(|i| kind_label(&i.kind).0.len()).max().unwrap_or(0);
+    let name_w = c
+        .items
+        .iter()
+        .map(|i| i.label().width())
+        .max()
+        .unwrap_or(0)
+        .min(MAX_NAME);
+    let kind_w = c
+        .items
+        .iter()
+        .map(|i| kind_label(&i.kind).0.len())
+        .max()
+        .unwrap_or(0);
     let detail_w = c.items.iter().map(|i| i.detail.width()).max().unwrap_or(0);
     let fixed = 1 + name_w + 2 + kind_w + if detail_w > 0 { 2 } else { 0 } + 1 + scrollbar as usize;
     let width = (fixed + detail_w).min(body.width as usize) as u16;
@@ -1933,8 +1988,17 @@ fn draw_completion(
         .saturating_sub(typed_w + 1)
         .max(body.x)
         .min(body.x + body.width.saturating_sub(width));
-    let y = if below >= shown { cy + 1 } else { cy - shown as u16 };
-    let area = Rect { x, y, width, height: shown as u16 };
+    let y = if below >= shown {
+        cy + 1
+    } else {
+        cy - shown as u16
+    };
+    let area = Rect {
+        x,
+        y,
+        width,
+        height: shown as u16,
+    };
     frame.render_widget(ratatui::widgets::Clear, area);
     let thumb = if scrollbar {
         let len = ((shown * shown) / c.items.len()).max(1);
@@ -1955,17 +2019,28 @@ fn draw_completion(
                 Span::styled(" ", base),
                 Span::styled(
                     format!("{name:<name_w$}"),
-                    if i == c.sel { base.add_modifier(Modifier::BOLD) } else { base },
+                    if i == c.sel {
+                        base.add_modifier(Modifier::BOLD)
+                    } else {
+                        base
+                    },
                 ),
                 Span::styled(format!("  {kind:<kind_w$}"), base.fg(kind_color)),
             ];
             if detail_w > 0 {
                 let d = fit(&item.detail, detail_room);
-                spans.push(Span::styled(format!("  {d:<detail_room$}"), base.fg(Color::DarkGray)));
+                spans.push(Span::styled(
+                    format!("  {d:<detail_room$}"),
+                    base.fg(Color::DarkGray),
+                ));
             }
             spans.push(Span::styled(" ", base));
             if scrollbar {
-                let bar = if thumb.contains(&row) { panel.thumb } else { panel.bg };
+                let bar = if thumb.contains(&row) {
+                    panel.thumb
+                } else {
+                    panel.bg
+                };
                 spans.push(Span::styled(" ", Style::new().bg(bar)));
             }
             Line::from(spans)
@@ -1990,11 +2065,21 @@ fn draw_pager(frame: &mut Frame, pager: &mut crate::app::Pager) {
     let total = text.lines.len();
     pager.top = pager.top.min(total.saturating_sub(rows));
     let title = if total > rows {
-        format!("{} · {}–{} of {total}", pager.title, pager.top + 1, (pager.top + rows).min(total))
+        format!(
+            "{} · {}–{} of {total}",
+            pager.title,
+            pager.top + 1,
+            (pager.top + rows).min(total)
+        )
     } else {
         pager.title.clone()
     };
-    let inner = modal(frame, panel, &title, "j/k PgUp/PgDn g/G scroll · any other key closes");
+    let inner = modal(
+        frame,
+        panel,
+        &title,
+        "j/k PgUp/PgDn g/G scroll · any other key closes",
+    );
     let lines: Vec<Line> = text.lines.into_iter().skip(pager.top).take(rows).collect();
     frame.render_widget(Paragraph::new(lines), inner);
 }
@@ -2013,7 +2098,12 @@ fn draw_debug(frame: &mut Frame, text: &str) {
         .collect();
     let width = lines.iter().map(Line::width).max().unwrap_or(0) as u16 + 4;
     let panel = centered(frame.area(), width.max(40), lines.len() as u16 + 2);
-    let inner = modal(frame, panel, "debug · copied to clipboard", "any key closes");
+    let inner = modal(
+        frame,
+        panel,
+        "debug · copied to clipboard",
+        "any key closes",
+    );
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -2122,7 +2212,9 @@ fn help_section(title: &str, rows: &[(&str, &str)]) -> Vec<Line<'static>> {
             }
             spans.push(Span::styled(k.to_string(), key));
         }
-        spans.push(Span::raw(" ".repeat(HELP_KEY_W.saturating_sub(keys.chars().count()))));
+        spans.push(Span::raw(
+            " ".repeat(HELP_KEY_W.saturating_sub(keys.chars().count())),
+        ));
         spans.push(Span::raw(what.to_string()));
         lines.push(Line::from(spans));
     }
@@ -2445,19 +2537,32 @@ mod tests {
     #[test]
     fn wrap_breaks_at_spaces_hard_breaks_long_words_and_keeps_nbsp() {
         let text = |w: &Wrapped| -> Vec<String> {
-            w.rows.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect()).collect()
+            w.rows
+                .iter()
+                .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+                .collect()
         };
         let red = Style::new().fg(Color::Red);
         let line = Line::from(vec![Span::raw("aaa bbb "), Span::styled("ccc", red)]);
         let w = wrap_lines(std::slice::from_ref(&line), 8);
         assert_eq!(text(&w), ["aaa bbb ", "ccc"]);
         assert_eq!(w.rows[1].spans[0].style, red, "styles survive the split");
-        assert_eq!(w.origin[1], RowOrigin { line: 0, col: 8, x: 8 });
+        assert_eq!(
+            w.origin[1],
+            RowOrigin {
+                line: 0,
+                col: 8,
+                x: 8
+            }
+        );
         // unwrapped when it fits, or with width 0
         assert_eq!(wrap_lines(std::slice::from_ref(&line), 11).rows.len(), 1);
         assert_eq!(wrap_lines(&[line], 0).rows.len(), 1);
         // a word longer than the row hard-breaks
-        assert_eq!(text(&wrap_lines(&[Line::raw("abcdefghij")], 4)), ["abcd", "efgh", "ij"]);
+        assert_eq!(
+            text(&wrap_lines(&[Line::raw("abcdefghij")], 4)),
+            ["abcd", "efgh", "ij"]
+        );
         // NBSP-reserved inline math moves whole to the next row
         let math = format!("ab {}", "\u{a0}".repeat(4));
         let w = wrap_lines(&[Line::raw(math)], 5);
@@ -2488,8 +2593,15 @@ mod tests {
         app.open_editor_for_test();
         let mut c = Completion::for_test(6, 9);
         for (i, name) in (0..20).map(|i| (i, format!(".li{i:02}"))) {
-            c.push_for_test(&name, if i % 2 == 0 { "function" } else { "instance" },
-                if i % 2 == 0 { "(start, stop, num=50)" } else { "int" });
+            c.push_for_test(
+                &name,
+                if i % 2 == 0 { "function" } else { "instance" },
+                if i % 2 == 0 {
+                    "(start, stop, num=50)"
+                } else {
+                    "int"
+                },
+            );
         }
         c.sel = 13; // scrolled past the first window
         app.completion = Some(c);
@@ -2500,13 +2612,22 @@ mod tests {
         if std::env::var_os("JOTTER_SHOW").is_some() {
             println!("{}", rows.join("\n"));
         }
-        let pop: Vec<&String> = rows.iter().filter(|r| r.contains("Function") || r.contains("Variable")).collect();
+        let pop: Vec<&String> = rows
+            .iter()
+            .filter(|r| r.contains("Function") || r.contains("Variable"))
+            .collect();
         assert_eq!(pop.len(), 12, "12-row window");
         // text column starts under the token after `np.` ("▌ x = np." = 9 cols)
         let col = |r: &str, pat: &str| r.find(pat).map(|b| r[..b].chars().count());
-        assert!(pop.iter().all(|r| col(r, "li").is_some_and(|c| c == 9)), "{pop:#?}");
+        assert!(
+            pop.iter().all(|r| col(r, "li").is_some_and(|c| c == 9)),
+            "{pop:#?}"
+        );
         let kind_col = col(pop[0], "Variable").or(col(pop[0], "Function"));
-        assert!(pop.iter().all(|r| col(r, "Variable").or(col(r, "Function")) == kind_col));
+        assert!(
+            pop.iter()
+                .all(|r| col(r, "Variable").or(col(r, "Function")) == kind_col)
+        );
         assert!(pop.iter().any(|r| r.contains("li13")), "selection visible");
     }
 
@@ -2530,7 +2651,10 @@ mod tests {
         let spans = show_tabs("\tx = 1", Style::new());
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "→x = 1", "one visible column per tab");
-        assert_eq!(expand_tabs("a\tb\n\x1b[31mab\tc"), "a       b\n\x1b[31mab      c");
+        assert_eq!(
+            expand_tabs("a\tb\n\x1b[31mab\tc"),
+            "a       b\n\x1b[31mab      c"
+        );
     }
 
     #[test]
@@ -2549,7 +2673,10 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 12)).unwrap();
         terminal.draw(|f| draw(f, &mut app, &mut rendered)).unwrap();
-        let words: usize = buffer_rows(&terminal).iter().map(|r| r.matches("word").count()).sum();
+        let words: usize = buffer_rows(&terminal)
+            .iter()
+            .map(|r| r.matches("word").count())
+            .sum();
         assert_eq!(words, 30, "every word visible across wrapped rows");
         // clicks on a continuation row map back to the one source line
         assert!(matches!(
@@ -2569,7 +2696,14 @@ mod tests {
         let all = rows.join("\n");
         if std::env::var_os("JOTTER_SHOW").is_some() {
             println!("{all}");
-            println!("{}", render(100, 14, &|f| draw_debug(f, "jotter 0.1.0\ncell 1/2 · id a1 · code\nrender: src 1 · out 40")).join("\n"));
+            println!(
+                "{}",
+                render(100, 14, &|f| draw_debug(
+                    f,
+                    "jotter 0.1.0\ncell 1/2 · id a1 · code\nrender: src 1 · out 40"
+                ))
+                .join("\n")
+            );
         }
         for (heading, _) in HELP {
             assert!(all.contains(heading), "section {heading} missing:\n{all}");

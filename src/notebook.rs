@@ -340,14 +340,20 @@ mod tests {
     #[test]
     fn save_strips_in_memory_transient() {
         let mut nb = Notebook::new_empty();
-        nb.cells[0].push_output(serde_json::json!({"output_type": "display_data", "data": {},
-            "metadata": {}, "transient": {"display_id": "d1"}}));
+        nb.cells[0].push_output(
+            serde_json::json!({"output_type": "display_data", "data": {},
+            "metadata": {}, "transient": {"display_id": "d1"}}),
+        );
         let path = std::env::temp_dir().join(format!("jotter-tr-{}.ipynb", std::process::id()));
         nb.save(&path).unwrap();
         let saved = std::fs::read_to_string(&path).unwrap();
         std::fs::remove_file(&path).ok();
         assert!(!saved.contains("transient"), "{saved}");
-        assert!(nb.cells[0].outputs.as_ref().unwrap()[0].get("transient").is_some());
+        assert!(
+            nb.cells[0].outputs.as_ref().unwrap()[0]
+                .get("transient")
+                .is_some()
+        );
     }
 
     #[test]
@@ -360,7 +366,11 @@ mod tests {
         .unwrap();
         nb.upgrade_to_4_5();
         assert_eq!(nb.extra["nbformat_minor"], 5);
-        assert!(nb.cells[0].extra["id"].as_str().is_some_and(|id| id.len() == 8));
+        assert!(
+            nb.cells[0].extra["id"]
+                .as_str()
+                .is_some_and(|id| id.len() == 8)
+        );
         assert_eq!(nb.cells[1].extra["id"], "keep");
     }
 

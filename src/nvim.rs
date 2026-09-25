@@ -424,11 +424,7 @@ impl NvimSession {
                 "cnoreabbrev <expr> {ab} (getcmdtype() ==# ':' && getcmdline() ==# '{ab}') ? '{cmd}' : '{ab}'\n"
             );
         }
-        rpc.request(
-            "nvim_exec2",
-            vec![setup.into(), Value::Map(vec![])],
-            SETUP,
-        )?;
+        rpc.request("nvim_exec2", vec![setup.into(), Value::Map(vec![])], SETUP)?;
         Ok(Self {
             rpc,
             buffers: HashMap::new(),
@@ -512,8 +508,7 @@ impl NvimCell {
                     vec![buf.clone(), 0.into(), (-1).into(), false.into()],
                 )?;
                 let differs = cur.as_array().is_none_or(|a| {
-                    a.len() != src_lines.len()
-                        || a.iter().zip(&src_lines).any(|(x, y)| x != y)
+                    a.len() != src_lines.len() || a.iter().zip(&src_lines).any(|(x, y)| x != y)
                 });
                 if differs {
                     session.req(
@@ -542,7 +537,10 @@ impl NvimCell {
                 session.cmd("setlocal buftype=acwrite undolevels=-1")?;
                 // filetype fires FileType autocmds (ftplugins, user config);
                 // alphanumerics only, it goes through an Ex command
-                let ft: String = filetype.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+                let ft: String = filetype
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric())
+                    .collect();
                 if !ft.is_empty() {
                     session.cmd(&format!("setlocal filetype={ft}"))?;
                 }
@@ -606,7 +604,10 @@ impl NvimCell {
     /// its buffer would be read back *as the cell*. When the current buffer
     /// or window isn't the cell's, reclaim nvim and say so instead.
     fn readback(&mut self) -> Result<()> {
-        match self.session.req("nvim_eval", vec![self.state_expr().into()]) {
+        match self
+            .session
+            .req("nvim_eval", vec![self.state_expr().into()])
+        {
             Ok(v) if Self::is_foreign(&v, self.bufnr) => {
                 self.session.req(
                     "nvim_exec_lua",
@@ -616,7 +617,9 @@ impl NvimCell {
                     "nvim opened a window/picker — jotter can't draw nvim UI, so it was closed"
                         .into(),
                 );
-                let v = self.session.req("nvim_eval", vec![self.state_expr().into()])?;
+                let v = self
+                    .session
+                    .req("nvim_eval", vec![self.state_expr().into()])?;
                 self.apply_state(v)
             }
             Ok(v) => self.apply_state(v),
@@ -625,10 +628,7 @@ impl NvimCell {
                 // (hit-enter after an error, ...). nvim_get_mode is answered
                 // even then — it doubles as the liveness probe; a dead child
                 // propagates the original error to trigger the fallback.
-                let m = self
-                    .session
-                    .req("nvim_get_mode", vec![])
-                    .map_err(|_| e)?;
+                let m = self.session.req("nvim_get_mode", vec![]).map_err(|_| e)?;
                 if let Some(mode) = m
                     .as_map()
                     .and_then(|m| m.iter().find(|(k, _)| k.as_str() == Some("mode")))
@@ -849,7 +849,10 @@ mod tests {
         // `.` repeat
         c.feed("ggx").unwrap();
         c.feed("j.").unwrap();
-        assert_eq!((c.lines[0].as_str(), c.lines[1].as_str()), ("ello", "hree four"));
+        assert_eq!(
+            (c.lines[0].as_str(), c.lines[1].as_str()),
+            ("ello", "hree four")
+        );
         c.feed("uu").unwrap();
 
         // macro: qa A!<Esc> q, replay with @a
@@ -859,7 +862,10 @@ mod tests {
         c.feed("<Esc>").unwrap();
         c.feed("q").unwrap();
         c.feed("j@a").unwrap();
-        assert_eq!((c.lines[0].as_str(), c.lines[1].as_str()), ("hello!", "three four!"));
+        assert_eq!(
+            (c.lines[0].as_str(), c.lines[1].as_str()),
+            ("hello!", "three four!")
+        );
 
         // visual line selection readback
         c.feed("ggVj").unwrap();
@@ -873,7 +879,9 @@ mod tests {
         b.replace_range(0, 3, "HEL").unwrap();
         assert_eq!(b.source().lines().next(), Some("HELlo!"));
         assert_eq!((b.cursor(), b.mode()), ((0, 3), ModeKind::Insert));
-        let Backend::Nvim(mut c) = b else { unreachable!() };
+        let Backend::Nvim(mut c) = b else {
+            unreachable!()
+        };
         c.feed("<Esc>").unwrap();
 
         // Tab inserts spaces, never a literal tab (clean-config expandtab)
@@ -889,13 +897,20 @@ mod tests {
         assert_eq!(c.mode_kind(), ModeKind::Normal);
         // ...and so is a split onto another buffer (e.g. a file opened from it)
         c.feed(":new<CR>").unwrap();
-        assert!(c.lines.len() > 1, "cell text still read back: {:?}", c.lines);
+        assert!(
+            c.lines.len() > 1,
+            "cell text still read back: {:?}",
+            c.lines
+        );
         assert!(c.take_notice().is_some());
 
         // cmdline echo (blind-cmdline mitigation)
         c.feed(":").unwrap();
         c.feed("wq").unwrap();
-        assert_eq!((c.mode_kind(), c.cmdline.as_str()), (ModeKind::Cmdline, ":wq"));
+        assert_eq!(
+            (c.mode_kind(), c.cmdline.as_str()),
+            (ModeKind::Cmdline, ":wq")
+        );
         c.feed("<Esc>").unwrap();
 
         // latency: the plan's gate is < 1 ms per key (2 RPC round-trips)
@@ -906,7 +921,10 @@ mod tests {
         }
         let per_key = t0.elapsed() / 100;
         println!("per-key round-trip: {per_key:?}");
-        assert!(per_key < Duration::from_millis(1), "per-key {per_key:?} >= 1 ms");
+        assert!(
+            per_key < Duration::from_millis(1),
+            "per-key {per_key:?} >= 1 ms"
+        );
     }
 
     /// The jotter-level key intercepts on the Backend surface (what app.rs
@@ -919,9 +937,7 @@ mod tests {
         let mut b = Backend::Nvim(cell);
 
         // Shift+Enter runs in any mode; Esc in normal mode exits the cell
-        let run = b
-            .input(key(KeyCode::Enter, KeyModifiers::SHIFT))
-            .unwrap();
+        let run = b.input(key(KeyCode::Enter, KeyModifiers::SHIFT)).unwrap();
         assert!(matches!(run, Outcome::Run { advance: true }));
         assert!(matches!(
             b.input(key(KeyCode::Esc, KeyModifiers::NONE)).unwrap(),
@@ -929,7 +945,8 @@ mod tests {
         ));
 
         // Esc in insert mode forwards to nvim instead of exiting
-        b.input(key(KeyCode::Char('i'), KeyModifiers::NONE)).unwrap();
+        b.input(key(KeyCode::Char('i'), KeyModifiers::NONE))
+            .unwrap();
         assert_eq!(b.mode(), ModeKind::Insert);
         assert!(matches!(
             b.input(key(KeyCode::Esc, KeyModifiers::NONE)).unwrap(),
@@ -938,7 +955,8 @@ mod tests {
         assert_eq!(b.mode(), ModeKind::Normal);
 
         // visual mode reaches the render surface; Esc cancels it (no exit)
-        b.input(key(KeyCode::Char('v'), KeyModifiers::NONE)).unwrap();
+        b.input(key(KeyCode::Char('v'), KeyModifiers::NONE))
+            .unwrap();
         assert!(b.visual().is_some());
         assert!(matches!(
             b.input(key(KeyCode::Esc, KeyModifiers::NONE)).unwrap(),
@@ -974,7 +992,8 @@ mod tests {
         assert_eq!(cmdline_quit("ZQ"), Some(true));
         assert_eq!(b.take_quit_request(), None);
         // nvim survived all of it: a real edit still round-trips
-        b.input(key(KeyCode::Char('x'), KeyModifiers::NONE)).unwrap();
+        b.input(key(KeyCode::Char('x'), KeyModifiers::NONE))
+            .unwrap();
         assert_eq!(b.source(), "bc");
     }
 }

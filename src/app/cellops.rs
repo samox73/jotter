@@ -32,7 +32,6 @@ pub(super) fn push_capped(stack: &mut Vec<CellOp>, op: CellOp) {
     }
 }
 
-
 impl App {
     /// Perform `op` as a new undo step (clears redo).
     pub(super) fn record(&mut self, op: CellOp, rendered: &mut Rendered) {
@@ -91,7 +90,15 @@ impl App {
             CellOp::Swap(a, b) => {
                 cells.swap(a, b);
                 rendered.swap_cells(a, b);
-                let swap = |i: usize| if i == a { b } else if i == b { a } else { i };
+                let swap = |i: usize| {
+                    if i == a {
+                        b
+                    } else if i == b {
+                        a
+                    } else {
+                        i
+                    }
+                };
                 self.remap_running(|i| Some(swap(i)));
                 self.selected = swap(self.selected);
                 CellOp::Swap(a, b)
@@ -162,17 +169,24 @@ impl App {
     /// Split the cell being edited at the editor cursor: text before stays,
     /// text after becomes a new cell below (same type, no outputs).
     pub(super) fn split_cell(&mut self, rendered: &mut Rendered) {
-        let Some(editor) = self.editor.take() else { return };
+        let Some(editor) = self.editor.take() else {
+            return;
+        };
         let (row, col) = editor.cursor();
         let source = editor.source();
         if let Some(session) = editor.into_session() {
             self.nvim = Some(session);
         }
         let at = self.selected;
-        let Some(cell) = self.notebook.cells.get(at) else { return };
+        let Some(cell) = self.notebook.cells.get(at) else {
+            return;
+        };
         let offset = char_offset(&source, (row, col));
         let (before, after) = source.split_at(
-            source.char_indices().nth(offset).map_or(source.len(), |(b, _)| b),
+            source
+                .char_indices()
+                .nth(offset)
+                .map_or(source.len(), |(b, _)| b),
         );
         let before = before.strip_suffix('\n').unwrap_or(before).to_string();
         let after = after.strip_prefix('\n').unwrap_or(after).to_string();
@@ -282,7 +296,6 @@ impl App {
         self.yanked = Some(cell.clone());
         self.message = Some("cell yanked (p pastes) · source on the clipboard".into());
     }
-
 }
 
 #[cfg(test)]
@@ -302,7 +315,10 @@ mod tests {
         assert_eq!(sources(&app), ["a = 1", "b = 2"]);
         assert_eq!(app.selected, 1);
         assert!(app.notebook.cells[1].outputs.as_ref().unwrap().is_empty());
-        assert_ne!(app.notebook.cells[0].extra["id"], app.notebook.cells[1].extra["id"]);
+        assert_ne!(
+            app.notebook.cells[0].extra["id"],
+            app.notebook.cells[1].extra["id"]
+        );
         app.undo(&mut r);
         assert_eq!(sources(&app), ["a = 1\nb = 2"]);
         app.redo(&mut r);
@@ -333,7 +349,10 @@ mod tests {
         app.on_key(key('y'), &mut r);
         app.on_key(key('p'), &mut r);
         assert_eq!(sources(&app), ["x", "x"]);
-        assert_ne!(app.notebook.cells[0].extra["id"], app.notebook.cells[1].extra["id"]);
+        assert_ne!(
+            app.notebook.cells[0].extra["id"],
+            app.notebook.cells[1].extra["id"]
+        );
         app.on_key(key('K'), &mut r); // move the copy up
         assert_eq!(app.selected, 0);
         app.undo(&mut r);
@@ -350,5 +369,4 @@ mod tests {
         assert_eq!(cell.source, "x");
         assert_eq!(cell.outputs.as_ref().unwrap().len(), 1);
     }
-
 }

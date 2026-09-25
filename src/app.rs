@@ -1,7 +1,7 @@
 use crate::editor::{Editor, Outcome};
 use crate::kernel::{Event, Kernel};
-use crate::nvim::{Backend, ModeKind, NvimCell, NvimSession};
 use crate::notebook::{Cell, Notebook, new_cell_id};
+use crate::nvim::{Backend, ModeKind, NvimCell, NvimSession};
 use crate::ui::Rendered;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -237,7 +237,10 @@ fn autosave_path_for(path: &std::path::Path) -> PathBuf {
     match crate::config::state_dir() {
         Some(dir) => dir.join("autosave").join(name),
         None => {
-            let file = path.file_name().map(|s| s.to_string_lossy()).unwrap_or_default();
+            let file = path
+                .file_name()
+                .map(|s| s.to_string_lossy())
+                .unwrap_or_default();
             path.with_file_name(format!(".{file}.autosave"))
         }
     }
@@ -536,8 +539,7 @@ impl App {
             }
             return;
         }
-        if self.zoom.is_some() || self.show_help || self.debug.is_some() || self.confirm.is_some()
-        {
+        if self.zoom.is_some() || self.show_help || self.debug.is_some() || self.confirm.is_some() {
             return; // overlay/question owns the screen; keys close it
         }
         if matches!(
@@ -631,7 +633,10 @@ impl App {
         self.selected = cell;
         self.manual_scroll = true; // a click never scrolls the view
         match kind {
-            HitKind::Source { line: row, col: col0 } => {
+            HitKind::Source {
+                line: row,
+                col: col0,
+            } => {
                 // markdown renders rich when not edited: a single click only
                 // selects; a double click opens the raw source at the line
                 let is_md = self
@@ -820,8 +825,9 @@ impl App {
                     self.message = Some("autosave deleted".into());
                 }
                 _ => {
-                    self.message =
-                        Some("autosave kept — the next autosave (after any change) replaces it".into())
+                    self.message = Some(
+                        "autosave kept — the next autosave (after any change) replaces it".into(),
+                    )
                 }
             },
         }
@@ -829,7 +835,9 @@ impl App {
 
     /// Keys while a status-line prompt (`/` search, `S` save as) is open.
     fn on_key_prompt(&mut self, key: KeyEvent) {
-        let Some(prompt) = &mut self.prompt else { return };
+        let Some(prompt) = &mut self.prompt else {
+            return;
+        };
         match key.code {
             KeyCode::Esc => self.prompt = None,
             KeyCode::Backspace => {
@@ -866,7 +874,10 @@ impl App {
         }
         if target.exists() && target != self.path && self.overwrite_armed.as_ref() != Some(&target)
         {
-            self.message = Some(format!("{} exists — Enter again to overwrite", target.display()));
+            self.message = Some(format!(
+                "{} exists — Enter again to overwrite",
+                target.display()
+            ));
             self.overwrite_armed = Some(target);
             return false;
         }
@@ -1320,13 +1331,21 @@ impl App {
                         } else {
                             "queued"
                         };
-                        let half = if self.half_done.contains(m) { ", half-done" } else { "" };
+                        let half = if self.half_done.contains(m) {
+                            ", half-done"
+                        } else {
+                            ""
+                        };
                         format!("{state}{half} msg {m}")
                     })
                     .collect();
                 out += &format!(
                     "exec: {}\n",
-                    if runs.is_empty() { "idle".into() } else { runs.join(" · ") }
+                    if runs.is_empty() {
+                        "idle".into()
+                    } else {
+                        runs.join(" · ")
+                    }
                 );
             }
             None => out += "no cell selected (empty notebook)\n",
@@ -1535,9 +1554,13 @@ impl App {
                     }
                 }
             }
-            Event::Complete { parent, matches, start, types, .. } => {
-                self.on_complete_reply(parent, matches, start, types)
-            }
+            Event::Complete {
+                parent,
+                matches,
+                start,
+                types,
+                ..
+            } => self.on_complete_reply(parent, matches, start, types),
             Event::Inspect { parent, text } => self.on_inspect_reply(parent, text),
             Event::Output { parent, output } => {
                 if let Some(idx) = self.target_cell(&parent) {
@@ -1629,11 +1652,21 @@ pub(super) mod tests {
     }
 
     pub(super) fn labels(app: &App) -> Vec<&str> {
-        app.completion.as_ref().unwrap().items.iter().map(|c| c.label()).collect()
+        app.completion
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .map(|c| c.label())
+            .collect()
     }
 
     pub(super) fn sources(app: &App) -> Vec<&str> {
-        app.notebook.cells.iter().map(|c| c.source.as_str()).collect()
+        app.notebook
+            .cells
+            .iter()
+            .map(|c| c.source.as_str())
+            .collect()
     }
 
     pub(super) fn key(c: char) -> KeyEvent {
@@ -1649,11 +1682,28 @@ pub(super) mod tests {
         app.run_cell(0, &mut r);
         assert_eq!(app.deferred, ["c1"], "queued once, by cell id");
         // a stale launch's failure is ignored
-        app.apply_kernel_event(Event::LaunchFailed { launch: 2, reason: "old".into() }, &mut r);
+        app.apply_kernel_event(
+            Event::LaunchFailed {
+                launch: 2,
+                reason: "old".into(),
+            },
+            &mut r,
+        );
         assert_eq!(app.deferred.len(), 1);
-        app.apply_kernel_event(Event::LaunchFailed { launch: 3, reason: "boom".into() }, &mut r);
+        app.apply_kernel_event(
+            Event::LaunchFailed {
+                launch: 3,
+                reason: "boom".into(),
+            },
+            &mut r,
+        );
         assert!(app.deferred.is_empty() && !app.kernel_starting);
-        assert!(app.message.as_deref().unwrap().contains("1 queued run(s) dropped"));
+        assert!(
+            app.message
+                .as_deref()
+                .unwrap()
+                .contains("1 queued run(s) dropped")
+        );
     }
 
     #[test]
@@ -1670,13 +1720,18 @@ pub(super) mod tests {
     #[test]
     fn update_display_data_replaces_matching_outputs_everywhere() {
         let (mut app, mut r) = one_cell_app("upd");
-        let disp = |v: &str| serde_json::json!({"output_type": "display_data",
-            "data": {"text/plain": v}, "metadata": {}, "transient": {"display_id": "d1"}});
+        let disp = |v: &str| {
+            serde_json::json!({"output_type": "display_data",
+            "data": {"text/plain": v}, "metadata": {}, "transient": {"display_id": "d1"}})
+        };
         app.notebook.cells[0].push_output(disp("old"));
         app.notebook.cells.push(app.notebook.cells[0].clone());
         r.rebuild_all(&app.notebook);
         app.apply_kernel_event(
-            Event::UpdateDisplay { display_id: "d1".into(), output: disp("new") },
+            Event::UpdateDisplay {
+                display_id: "d1".into(),
+                output: disp("new"),
+            },
             &mut r,
         );
         for c in &app.notebook.cells {
@@ -1694,7 +1749,13 @@ pub(super) mod tests {
         r.rebuild_all(&app.notebook);
         let start = |app: &mut App, r: &mut Rendered, id: &str, idx: usize| {
             app.running.insert(id.into(), idx);
-            app.apply_kernel_event(Event::ExecutionCount { parent: id.into(), count: 1 }, r);
+            app.apply_kernel_event(
+                Event::ExecutionCount {
+                    parent: id.into(),
+                    count: 1,
+                },
+                r,
+            );
         };
         app.follow = true; // as run_range(0..3) sets it
         start(&mut app, &mut r, "m1", 1);
@@ -1713,11 +1774,17 @@ pub(super) mod tests {
     fn space_runs_x_runs_all_ctrl_r_redoes() {
         let (mut app, mut r) = one_cell_app("keys");
         app.on_key(key(' '), &mut r);
-        assert_eq!(app.message.as_deref(), Some("no kernel — R to (re)start one"));
+        assert_eq!(
+            app.message.as_deref(),
+            Some("no kernel — R to (re)start one")
+        );
         app.on_key(key('a'), &mut r);
         app.on_key(key('u'), &mut r);
         assert_eq!(app.notebook.cells.len(), 1);
-        app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL), &mut r);
+        app.on_key(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &mut r,
+        );
         assert_eq!(app.notebook.cells.len(), 2, "Ctrl+r redoes");
         app.on_key(key('X'), &mut r);
         assert!(app.follow, "run all follows");
@@ -1745,7 +1812,11 @@ pub(super) mod tests {
     #[test]
     fn autosave_paths_live_in_the_state_dir_keyed_by_absolute_path() {
         let p = autosave_path_for(std::path::Path::new("/data/nb/a.ipynb"));
-        assert!(p.ends_with("jotter/autosave/%data%nb%a.ipynb"), "{}", p.display());
+        assert!(
+            p.ends_with("jotter/autosave/%data%nb%a.ipynb"),
+            "{}",
+            p.display()
+        );
         let long = format!("/{}/a.ipynb", "d".repeat(400));
         let name = autosave_path_for(std::path::Path::new(&long));
         assert!(name.file_name().unwrap().len() <= 200);
@@ -1755,20 +1826,44 @@ pub(super) mod tests {
     fn execution_ends_on_reply_and_idle_in_either_order() {
         let (mut app, mut r) = one_cell_app("end");
         for (first, second) in [
-            (Event::Done { parent: "m".into() }, Event::Status { parent: "m".into(), busy: false }),
-            (Event::Status { parent: "m".into(), busy: false }, Event::Done { parent: "m".into() }),
+            (
+                Event::Done { parent: "m".into() },
+                Event::Status {
+                    parent: "m".into(),
+                    busy: false,
+                },
+            ),
+            (
+                Event::Status {
+                    parent: "m".into(),
+                    busy: false,
+                },
+                Event::Done { parent: "m".into() },
+            ),
         ] {
             app.notebook.cells[0].outputs = Some(Vec::new());
             app.running.insert("m".into(), 0);
             app.apply_kernel_event(first, &mut r);
             // output racing the reply (separate sockets) still lands
-            app.apply_kernel_event(Event::Output { parent: "m".into(), output: stream("late\n") }, &mut r);
+            app.apply_kernel_event(
+                Event::Output {
+                    parent: "m".into(),
+                    output: stream("late\n"),
+                },
+                &mut r,
+            );
             assert_eq!(app.notebook.cells[0].outputs.as_ref().unwrap().len(), 1);
             app.apply_kernel_event(second, &mut r);
             assert!(app.running.is_empty() && app.half_done.is_empty());
         }
         // idle of a request we never sent (kernel_info) is ignored
-        app.apply_kernel_event(Event::Status { parent: "other".into(), busy: false }, &mut r);
+        app.apply_kernel_event(
+            Event::Status {
+                parent: "other".into(),
+                busy: false,
+            },
+            &mut r,
+        );
         assert!(app.half_done.is_empty());
     }
 
@@ -1777,8 +1872,20 @@ pub(super) mod tests {
         let (mut app, mut r) = one_cell_app("toggle");
         app.running.insert("m".into(), 0);
         app.toggle_type(&mut r); // code -> markdown mid-run
-        app.apply_kernel_event(Event::ExecutionCount { parent: "m".into(), count: 3 }, &mut r);
-        app.apply_kernel_event(Event::Output { parent: "m".into(), output: stream("x\n") }, &mut r);
+        app.apply_kernel_event(
+            Event::ExecutionCount {
+                parent: "m".into(),
+                count: 3,
+            },
+            &mut r,
+        );
+        app.apply_kernel_event(
+            Event::Output {
+                parent: "m".into(),
+                output: stream("x\n"),
+            },
+            &mut r,
+        );
         let cell = &app.notebook.cells[0];
         assert!(cell.outputs.is_none());
         assert!(!cell.extra.contains_key("execution_count"));

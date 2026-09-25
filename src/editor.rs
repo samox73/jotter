@@ -84,7 +84,11 @@ impl Editor {
         self.snapshot();
         let src = self.source();
         let byte = |ci: usize| src.char_indices().nth(ci).map_or(src.len(), |(b, _)| b);
-        let new = format!("{}{text}{}", &src[..byte(start)], &src[byte(end.max(start))..]);
+        let new = format!(
+            "{}{text}{}",
+            &src[..byte(start)],
+            &src[byte(end.max(start))..]
+        );
         let caret: String = new.chars().take(start + text.chars().count()).collect();
         self.lines = new.split('\n').map(String::from).collect();
         let row = caret.matches('\n').count();
@@ -439,7 +443,10 @@ mod tests {
         assert_eq!(e.source(), "import numpy\nx");
         assert_eq!(e.cursor, (0, 12));
         e.replace_chars(13, 14, "yy"); // row 1
-        assert_eq!((e.source().as_str(), e.cursor), ("import numpy\nyy", (1, 2)));
+        assert_eq!(
+            (e.source().as_str(), e.cursor),
+            ("import numpy\nyy", (1, 2))
+        );
         e.input(code(KeyCode::Esc));
         e.input(key('u'));
         assert_eq!(e.source(), "import numpy\nx");

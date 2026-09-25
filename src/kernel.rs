@@ -37,7 +37,10 @@ pub enum Event {
         types: HashMap<String, (String, String)>,
     },
     /// inspect_reply: `text` is the text/plain doc (may carry ANSI colors).
-    Inspect { parent: String, text: Option<String> },
+    Inspect {
+        parent: String,
+        text: Option<String>,
+    },
     /// clear_output arrived; with `wait` the clear is deferred to next output.
     Clear { parent: String, wait: bool },
     /// The kernel asked for user input (`input()`); reply via `Kernel::reply_input`.
@@ -427,7 +430,10 @@ impl Kernel {
 
     /// Queue a complete_request; `cursor_pos` counts unicode code points.
     pub fn complete(&self, code: String, cursor_pos: usize) -> String {
-        self.shell(JupyterMessage::new(CompleteRequest { code, cursor_pos }, None))
+        self.shell(JupyterMessage::new(
+            CompleteRequest { code, cursor_pos },
+            None,
+        ))
     }
 
     /// Queue an inspect_request (Shift+Tab docs) at `cursor_pos`.
@@ -488,7 +494,12 @@ fn completion_types(meta: &serde_json::Map<String, Value>) -> HashMap<String, (S
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .map(|e| (str_of(e, "text"), (str_of(e, "type"), str_of(e, "signature"))))
+        .map(|e| {
+            (
+                str_of(e, "text"),
+                (str_of(e, "type"), str_of(e, "signature")),
+            )
+        })
         .collect()
 }
 
@@ -603,10 +614,20 @@ mod tests {
         let code = "import os\nos.getc";
         let id = kernel.complete(code.into(), code.chars().count());
         loop {
-            if let Event::Complete { parent, matches, start, .. } = next().await
+            if let Event::Complete {
+                parent,
+                matches,
+                start,
+                ..
+            } = next().await
                 && parent == id
             {
-                assert!(matches.iter().any(|m| m.trim_start_matches('.') == "getcwd"), "{matches:?}");
+                assert!(
+                    matches
+                        .iter()
+                        .any(|m| m.trim_start_matches('.') == "getcwd"),
+                    "{matches:?}"
+                );
                 assert!(start == 13 || start == 12, "token start {start}");
                 break;
             }
