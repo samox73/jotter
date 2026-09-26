@@ -7,6 +7,7 @@ mod latex;
 mod log;
 mod notebook;
 mod nvim;
+mod recolor;
 mod ui;
 
 use anyhow::Result;
@@ -101,6 +102,13 @@ async fn main() -> Result<()> {
     } else {
         ratatui_image::picker::Picker::from_query_stdio().ok()
     };
+    // the terminal's colours, for recolouring plots (answers are read from
+    // stdin, so this too must come before EventStream)
+    recolor::init(
+        (picker.is_some() && config::get().recolor_plots)
+            .then(recolor::query)
+            .flatten(),
+    );
     // kitty keeps images across a crashed session: drop them all
     if picker
         .as_ref()

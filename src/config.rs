@@ -29,6 +29,8 @@ pub struct Config {
     pub jedi: bool,
     /// Open completion automatically when you type `.` after a name. When `false`, completion opens only with `Tab`.
     pub complete_on_dot: bool,
+    /// Show plots in your terminal's colours: a figure's white background becomes the terminal background and black text and axes become the terminal foreground, while coloured lines keep their hue. Only the display changes; the notebook, its saved outputs and files written with `savefig` keep their original colours. It applies to images with a large white background and no transparency, so photos and figures you styled yourself are left alone. See [outputs](/jotter/guides/outputs/#plots-in-your-terminals-colours).
+    pub recolor_plots: bool,
 }
 
 impl Default for Config {
@@ -42,6 +44,7 @@ impl Default for Config {
             nvim_user_config: true,
             jedi: false,
             complete_on_dot: true,
+            recolor_plots: true,
         }
     }
 }

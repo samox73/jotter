@@ -590,12 +590,14 @@ impl Rendered {
             let Some(v) = data.get(mime) else { continue };
             let b64: String = join_multiline(v).split_whitespace().collect();
             let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
-            return image::load_from_memory(&bytes).ok();
+            return image::load_from_memory(&bytes)
+                .ok()
+                .map(crate::recolor::apply);
         }
         let svg = join_multiline(data.get("image/svg+xml")?);
-        Some(image::DynamicImage::ImageRgba8(crate::latex::render_svg(
-            &svg,
-        )?))
+        Some(crate::recolor::apply(image::DynamicImage::ImageRgba8(
+            crate::latex::render_svg(&svg)?,
+        )))
     }
 
     /// If the output carries a raster/SVG image and graphics are available,
