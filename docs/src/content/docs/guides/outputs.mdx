@@ -49,6 +49,20 @@ In terminals with a graphics protocol the image is sharp; elsewhere it is drawn 
 
 Images taller than 18 rows ([`max_image_rows`](/jotter/reference/configuration/#max_image_rows)) are scaled down once, with high-quality resampling.
 
+### Plots in your terminal's colours
+
+Plotting libraries draw black on white, which is a glaring box on a dark terminal. jOtter shows such plots in your terminal's colours instead: the white background becomes the terminal's background, black text and axes become its foreground, and coloured lines and markers keep their hue. On a light terminal, plots look almost unchanged.
+
+This only changes what you see in jOtter. The notebook's saved outputs, files written with `savefig`, and what collaborators see in JupyterLab keep their original colours, and your plotting code needs no styling.
+
+jOtter recolours images that look like plots: a large white background and no transparency. Photos, and figures you've styled yourself with a transparent or dark background, are shown as they are. Heatmaps and colour maps inside a white figure are recoloured too, and with them their colour bars, so readings stay consistent, but the colours differ from the original. If you'd rather see every image exactly as the kernel sent it, turn this off:
+
+```toml title="~/.config/jotter/config.toml"
+recolor_plots = false
+```
+
+jOtter asks the terminal for its colours at startup. Terminals that don't answer, which is rare, get the original images.
+
 | Key | Does |
 | --- | --- |
 | <kbd>z</kbd> | Show the selected cell's image fullscreen; any key returns |
