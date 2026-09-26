@@ -51,7 +51,7 @@ If the kernel dies (for example, out of memory), the status line says so and <kb
 
 ## input()
 
-When code calls `input()`, the prompt appears in the status line. Type your answer and press <kbd>Enter</kbd>. `getpass()` works too: what you type is shown as dots.
+When code calls `input()`, a box with the prompt opens over the notebook. Type your answer and press <kbd>Enter</kbd>; <kbd>Esc</kbd> sends an empty answer, and <kbd>Ctrl</kbd>+<kbd>c</kbd> interrupts the kernel instead. `getpass()` works too: what you type is shown as dots.
 
 <Clip name="input" />
 
@@ -63,4 +63,4 @@ The status line at the bottom shows, from left to right:
 - The file name, with `[+]` when there are unsaved changes.
 - The selected cell's position, like `cell 3/12`.
 - The kernel's state: `○ idle`, `● busy` or `◌ no kernel`.
-- Messages, questions such as the quit prompt, and what you type for search, save-as or `input()`.
+- Messages, questions such as the quit prompt, and what you type for search or save-as.

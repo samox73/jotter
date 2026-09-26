@@ -21,15 +21,9 @@ hero:
 ---
 
 import { Card, CardGrid, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
-import { Image } from 'astro:assets';
 import Clip from '../../components/Clip.astro';
-import showcase from '../../../../assets/showcase.png';
 
-<Clip name="hero" />
-
-<div class="landing-shot">
-  <Image src={showcase} alt="jOtter showing a markdown cell with rendered LaTeX, syntax-highlighted code cells and an inline matplotlib plot" class="shot" />
-</div>
+<Clip name="hero" alt="A terminal: jotter opens a notebook and runs it top to bottom, showing a markdown cell with a rendered equation, code cells with their output, and an inline plot of a damped oscillation" />
 
 ## Why jOtter
 

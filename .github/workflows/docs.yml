@@ -31,6 +31,16 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: docs/package-lock.json
+      # feature clips: re-recorded only when a scene, notebook or jotter changed
+      - uses: actions/cache@v4
+        id: media
+        with:
+          path: docs/public/media
+          key: media-${{ hashFiles('docs/media/**', 'src/**', 'Cargo.lock', 'flake.nix', 'flake.lock') }}
+      - if: steps.media.outputs.cache-hit != 'true'
+        uses: cachix/install-nix-action@v31
+      - if: steps.media.outputs.cache-hit != 'true'
+        run: nix develop .#docs -c nu docs/media/record.nu
       - run: npm ci
         working-directory: docs
       - run: npm run build # runs `jotter --generate` first; fails on broken links
@@ -40,7 +50,7 @@ jobs:
           path: docs/dist
 
   deploy:
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
