@@ -99,3 +99,21 @@ export def config [settings: record] {
     mkdir $dir
     $settings | to toml | save -f ($dir | path join config.toml)
 }
+
+# kill -9 the jotter running in this scene's terminal (a simulated crash).
+# The pid comes from kitty, so no other jotter on the machine is touched.
+export def crash-jotter [] {
+    let pid = rc ls | from json | get 0.tabs.0.windows.0.foreground_processes
+        | where {|p| ($p.cmdline | first | path basename) == "jotter" }
+        | get 0.pid
+    ^kill -9 $pid
+}
+
+# Make the screen `px` logical pixels tall (default 600) for scenes whose
+# notebook is short, so the clip isn't mostly empty terminal. Call it first,
+# before starting jotter.
+export def height [px: int] {
+    let sock = glob ($env.JREC_RUN | path join "sway-ipc.*.sock") | first
+    ^swaymsg -s $sock output HEADLESS-1 resolution $"1920x($px * 2)" | ignore
+    sleep 300ms # kitty follows the new size
+}

@@ -73,7 +73,7 @@ def main [...scenes: string] {
         let work = "/tmp/jotter-demo"
         rm -rf $work
         mkdir $work
-        glob ($media | path join notebooks *.ipynb) | each {|f| cp $f $work } | ignore
+        glob ($media | path join notebooks *) | each {|f| cp $f $work } | ignore
         # a project venv next to the notebooks, as the docs recommend: jotter
         # finds its kernel there (the pinned Python, linked in)
         let venv = $work | path join .venv
@@ -87,6 +87,7 @@ def main [...scenes: string] {
             XDG_CONFIG_HOME: ($work | path join config)
             XDG_STATE_HOME: ($work | path join state)
             MPLCONFIGDIR: $media # its matplotlibrc: figure size and HiDPI
+            EDITOR: nvim # XDG_CONFIG_HOME is empty, so a clean nvim
             PATH: ($env.PATH | prepend ($repo | path join target release))
             JREC_KITTY: $sock
             JREC_RUN: $run
@@ -99,6 +100,9 @@ def main [...scenes: string] {
         }
         let result = try {
             wait-until "kitty" { (^kitty @ --to $sock ls | complete).exit_code == 0 }
+            # every scene starts at the full size (a scene may shrink it)
+            let ipc = glob ($run | path join "sway-ipc.*.sock") | first
+            ^swaymsg -s $ipc output HEADLESS-1 resolution 1920x1200 | ignore
             let scene = $media | path join scenes $"($name).nu"
             with-env $session { ^nu -c $"use '($media)/lib.nu' *; source '($scene)'" }
             let raw = $run | path join $"($name).mkv"

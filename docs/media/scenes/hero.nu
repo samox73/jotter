@@ -4,7 +4,7 @@
 rec start
 pause 800ms
 send "jotter tour.ipynb" --delay 70ms
-pause 300ms
+pause 1000ms
 key enter
 wait-for "cell 1/4"
 pause 2500ms # read the markdown and the equation

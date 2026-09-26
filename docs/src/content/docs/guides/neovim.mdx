@@ -6,7 +6,7 @@ description: "Let a hidden Neovim, with your own config, handle all cell editing
 import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import Clip from '../../../components/Clip.astro';
 
-<Clip name="neovim" caption="Visual mode, text objects and a macro, inside a cell" />
+<Clip name="neovim" caption="A text object, visual mode and undo, inside a cell" />
 
 With `editor = "nvim"` in your [config](/jotter/reference/configuration/#editor), jOtter runs a hidden `nvim --embed` in the background and hands it every key you type in a cell. Neovim does the editing; jOtter still draws everything. You get Neovim's full editing: operators and text objects (`dw`, `ci(`), visual modes, counts, registers, macros, `.` repeat and your own mappings.
 
