@@ -1,0 +1,22 @@
+# Plot style for the recordings (record.nu points MPLCONFIGDIR here), so the
+# example notebooks need no styling code. Transparent backgrounds let figures
+# sit on the terminal's own background; the same file in
+# ~/.config/matplotlib/matplotlibrc does this for everyday use.
+figure.facecolor: none
+axes.facecolor: none
+savefig.facecolor: none
+savefig.transparent: True
+legend.facecolor: none
+
+# light foreground for a dark terminal (base16-ocean, as in kitty.conf)
+text.color: c0c5ce
+axes.labelcolor: c0c5ce
+axes.edgecolor: 65737e
+xtick.color: c0c5ce
+ytick.color: c0c5ce
+legend.edgecolor: 65737e
+axes.prop_cycle: cycler('color', ['96b5b4', 'ebcb8b', 'b48ead', 'a3be8c', 'd08770', '8fa1b3'])
+
+# the capture is HiDPI (scale 2): twice the usual pixels per inch
+figure.figsize: 6.5, 3
+figure.dpi: 200

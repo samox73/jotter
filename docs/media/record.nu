@@ -86,6 +86,7 @@ def main [...scenes: string] {
             WAYLAND_DISPLAY: wayland-1
             XDG_CONFIG_HOME: ($work | path join config)
             XDG_STATE_HOME: ($work | path join state)
+            MPLCONFIGDIR: $media # its matplotlibrc styles every plot
             PATH: ($env.PATH | prepend ($repo | path join target release))
             JREC_KITTY: $sock
             JREC_RUN: $run
