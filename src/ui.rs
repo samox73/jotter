@@ -1607,24 +1607,38 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     } else {
         app.message.clone().unwrap_or_default()
     };
-    let status_line = Line::from(vec![
-        Span::styled(
-            mode_label,
-            Style::new()
-                .fg(Color::Black)
-                .bg(mode_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(format!(
-            " {}{}  cell {}/{}  ",
-            app.path.display(),
-            if app.dirty { " [+]" } else { "" },
-            app.selected + 1,
-            app.notebook.cells.len()
-        )),
-        kernel_state,
-        Span::raw(format!("  {tail}")),
-    ]);
+    // a pending question takes the whole line, so its choices always fit
+    let status_line = if app.confirm.is_some() {
+        Line::from(vec![
+            Span::styled(
+                mode_label,
+                Style::new()
+                    .fg(Color::Black)
+                    .bg(mode_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!(" {tail}")),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(
+                mode_label,
+                Style::new()
+                    .fg(Color::Black)
+                    .bg(mode_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!(
+                " {}{}  cell {}/{}  ",
+                app.path.display(),
+                if app.dirty { " [+]" } else { "" },
+                app.selected + 1,
+                app.notebook.cells.len()
+            )),
+            kernel_state,
+            Span::raw(format!("  {tail}")),
+        ])
+    };
     frame.render_widget(Paragraph::new(status_line), status);
 
     // `z`: fullscreen image overlay, centered, any key closes.

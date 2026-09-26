@@ -72,7 +72,7 @@ impl Confirm {
                 "restart kernel? R: restart · a: restart & run all · else cancel".into()
             }
             Confirm::Recover(_, summary) => {
-                format!("{summary} — r: restore it · d: delete it · else keep for now")
+                format!("{summary} — r: restore · d: delete · else keep")
             }
         }
     }
@@ -370,12 +370,7 @@ impl App {
                     let _ = std::fs::remove_file(&side);
                 }
                 n => {
-                    let summary = format!(
-                        "unsaved autosave from {} ago: {n} cell(s) differ ({} vs {} cells)",
-                        age(when),
-                        saved.cells.len(),
-                        self.notebook.cells.len()
-                    );
+                    let summary = format!("autosave from {} ago, {n} cell(s) differ", age(when));
                     self.confirm = Some(Confirm::Recover(Box::new(saved), summary));
                 }
             },
