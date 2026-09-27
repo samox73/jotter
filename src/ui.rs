@@ -42,6 +42,8 @@ pub struct InlineImage {
     col: u16,
     cols: u16,
     rows: u16,
+    /// Pixel size as transmitted (for the `D` report).
+    px: (u32, u32),
     proto: SlicedProtocol,
 }
 
@@ -288,12 +290,19 @@ impl CellBlock {
             self.out_scroll.to_string()
         };
         format!(
-            "src {} rows · out {} rows (cap {}) · out_scroll {follow} → win {} · images {} · wrap {}{}{}",
+            "src {} rows · out {} rows (cap {}) · out_scroll {follow} → win {} · images {}{} · wrap {}{}{}",
             self.src_rows(),
             self.out_len(),
             self.out_cap(),
             self.win_start(),
             self.images.len(),
+            self.images
+                .iter()
+                .map(|im| format!(
+                    " [{}x{} px → {}x{} cells @ line {} col {}]",
+                    im.px.0, im.px.1, im.cols, im.rows, im.line, im.col
+                ))
+                .collect::<String>(),
             self.wrap.width,
             if self.collapsed { " · collapsed" } else { "" },
             if self.full_images {
@@ -572,11 +581,13 @@ impl Rendered {
         } else {
             img
         };
+        let px = (img.width(), img.height());
         let proto = SlicedProtocol::new(picker, img, None).ok()?;
         let size = proto.size();
         Some(InlineImage {
             line: 0,
             col: 0,
+            px,
             cols: size.width.max(1),
             rows: size.height.max(1),
             proto,
