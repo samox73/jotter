@@ -66,3 +66,13 @@ kbd {
   border-radius: 1.5rem;
   box-shadow: var(--sl-shadow-lg);
 }
+
+/* screenshot galleries: two per row on wide screens */
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 1rem;
+}
+.gallery figure.media {
+  margin: 0;
+}

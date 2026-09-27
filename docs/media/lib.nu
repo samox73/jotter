@@ -117,3 +117,14 @@ export def height [px: int] {
     ^swaymsg -s $sock output HEADLESS-1 resolution $"1920x($px * 2)" | ignore
     sleep 300ms # kitty follows the new size
 }
+
+# Set the terminal's background and foreground (for light-theme stills).
+export def colors [background: string, foreground: string] {
+    rc set-colors --all $"background=($background)" $"foreground=($foreground)"
+}
+
+# Run a sway command on this scene's compositor, e.g. `sway fullscreen enable`.
+export def sway [...args: string] {
+    let sock = glob ($env.JREC_RUN | path join "sway-ipc.*.sock") | first
+    ^swaymsg -s $sock ...$args | ignore
+}

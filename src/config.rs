@@ -19,7 +19,7 @@ pub struct Config {
     pub autosave_secs: u64,
     /// The syntax-highlighting theme for code cells and fenced code in markdown. One of `base16-ocean.dark`, `base16-ocean.light`, `base16-eighties.dark`, `base16-mocha.dark`, `InspiredGitHub`, `Solarized (dark)` or `Solarized (light)`.
     ///
-    /// On a light terminal background, use `base16-ocean.light`, `InspiredGitHub` or `Solarized (light)`.
+    /// On a light terminal background, use `base16-ocean.light`, `InspiredGitHub` or `Solarized (light)`. See them all in the [theme gallery](/jotter/reference/themes/).
     pub theme: String,
     /// The cell editor: `"builtin"`, jOtter's own vim-style editor, or `"nvim"`, an embedded Neovim with your config and plugins that gives you the full Neovim editing model. The Neovim backend is experimental; see [embedded Neovim](/jotter/guides/neovim/). If Neovim is missing or crashes, jOtter falls back to the builtin editor.
     pub editor: String,

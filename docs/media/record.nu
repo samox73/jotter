@@ -85,6 +85,7 @@ def record-scene [name: string, repo: string, out: string, python_prefix: string
         JREC_RUN: $run
         JREC_OUT: $out
         JREC_SCENE: $name
+        JREC_WORK: $work
     }
     let result = try {
         wait-until "sway" { $run | path join wayland-1 | path exists }
@@ -138,6 +139,9 @@ def main [
         $scenes
     }
     let jobs = $jobs | default ([1 ((sys cpu | length) // 3)] | math max)
+    # nothing a scene starts may reach the real desktop: no X11 display, and
+    # the only Wayland display is each scene's headless sway
+    hide-env -i DISPLAY WAYLAND_DISPLAY WAYLAND_SOCKET SWAYSOCK
 
     ^cargo build --release --locked --manifest-path ($repo | path join Cargo.toml)
     # the Python environment with ipykernel (the one that ships `jupyter`)

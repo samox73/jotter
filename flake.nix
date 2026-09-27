@@ -42,7 +42,8 @@
         docs = pkgs.mkShell {
           packages = with pkgs; [
             rustc cargo nodejs_22 nushell
-            sway wf-recorder grim ffmpeg kitty wlrctl neovim
+            sway wf-recorder grim ffmpeg kitty wlrctl neovim wtype
+            foot alacritty wezterm ghostty tmux # the terminal gallery
             (python3.withPackages (p: with p; [ ipykernel numpy matplotlib tqdm sympy ]))
           ];
           # software OpenGL from this Mesa for kitty, also where the host has

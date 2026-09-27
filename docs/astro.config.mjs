@@ -55,6 +55,7 @@ export default defineConfig({
           items: [
             'reference/keybindings',
             'reference/configuration',
+            'reference/themes',
             'reference/cli',
             'reference/files',
             'reference/nbformat',

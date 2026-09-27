@@ -1,0 +1,31 @@
+---
+title: "Themes"
+description: "Every syntax theme jOtter ships, each on a terminal background that suits it."
+---
+
+import Still from '../../../components/Still.astro';
+
+The [`theme`](/jotter/reference/configuration/#theme) setting picks the syntax-highlighting theme for code cells and fenced code in markdown. The rest of jOtter's interface uses your terminal's own colours, and plots [follow the terminal's colours](/jotter/guides/outputs/#plots-in-your-terminals-colours) too, so pick a theme that suits your terminal's background:
+
+```toml title="~/.config/jotter/config.toml"
+theme = "base16-ocean.light"
+```
+
+## Dark
+
+<div class="gallery">
+  <Still name="theme-ocean-dark" alt="jOtter with the base16-ocean.dark theme" caption="base16-ocean.dark (default)" />
+  <Still name="theme-eighties-dark" alt="jOtter with the base16-eighties.dark theme" caption="base16-eighties.dark" />
+  <Still name="theme-mocha-dark" alt="jOtter with the base16-mocha.dark theme" caption="base16-mocha.dark" />
+  <Still name="theme-solarized-dark" alt="jOtter with the Solarized (dark) theme" caption="Solarized (dark)" />
+</div>
+
+## Light
+
+<div class="gallery">
+  <Still name="theme-ocean-light" alt="jOtter with the base16-ocean.light theme" caption="base16-ocean.light" />
+  <Still name="theme-inspired-github" alt="jOtter with the InspiredGitHub theme" caption="InspiredGitHub" />
+  <Still name="theme-solarized-light" alt="jOtter with the Solarized (light) theme" caption="Solarized (light)" />
+</div>
+
+With a light theme, math is drawn in a dark colour too. The theme name decides that: names containing `light`, and `InspiredGitHub`, count as light.
