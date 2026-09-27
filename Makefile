@@ -1,3 +1,3 @@
 .PHONY: install
 install:
-	cargo install --path . --locked
+	cargo install --force --path . --locked
