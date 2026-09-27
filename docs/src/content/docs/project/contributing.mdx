@@ -48,6 +48,14 @@ npm run dev        # live preview at http://localhost:4321/jotter/
 - Pages are MDX files in `docs/src/content/docs/`.
 - The [Keybindings](/jotter/reference/keybindings/), [Configuration](/jotter/reference/configuration/) and [Command line](/jotter/reference/cli/) pages are generated from the source code by `jotter --generate`, which `npm run dev` and `npm run build` run first. Edit `HELP` in `src/ui.rs`, the doc comments on `Config` in `src/config.rs`, or the `Args` in `src/main.rs`; not the generated files.
 - A test fails if a config option has no doc comment.
+- Clips and screenshots are recorded by `docs/media/record.nu` and committed in `docs/public/media/`. After a change that shows on screen, re-record the affected scenes and commit the results:
+
+  ```sh
+  nix develop .#docs -c nu docs/media/record.nu            # all scenes
+  nix develop .#docs -c nu docs/media/record.nu hero plots # some
+  ```
+
+  Each scene is a short script in `docs/media/scenes/`; `docs/media/lib.nu` has the commands they use.
 - The build fails on broken internal links.
 
 ## Releases
