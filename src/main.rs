@@ -123,6 +123,12 @@ async fn main() -> Result<()> {
 
     // kitty keyboard protocol: makes Shift+Enter / Ctrl+Enter distinct keys
     let enhanced = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+    app.keyboard_protocol = enhanced;
+    ::log::info!(
+        "terminal: graphics {}, keyboard protocol {}",
+        rendered.graphics_summary(),
+        if enhanced { "kitty" } else { "legacy" }
+    );
     enter_extras(enhanced);
     let result = run(
         &mut terminal,

@@ -127,6 +127,8 @@ pub struct App {
     pub should_quit: bool,
     /// One-shot status message.
     pub message: Option<String>,
+    /// The terminal speaks the kitty keyboard protocol (Shift+Enter works).
+    pub keyboard_protocol: bool,
     pub kernel: Option<Kernel>,
     pub kernel_busy: bool,
     /// In-flight executions: msg_id -> cell index (remapped on cell ops).
@@ -309,6 +311,7 @@ impl App {
             scroll: 0,
             should_quit: false,
             message: None,
+            keyboard_protocol: false,
             kernel: None,
             kernel_busy: false,
             running: HashMap::new(),
@@ -1375,7 +1378,7 @@ impl App {
             );
         }
         out += &format!(
-            "editor: {} · graphics: {}\n",
+            "editor: {} · graphics: {} · keys: {}\n",
             match &self.editor {
                 None => "closed".to_string(),
                 Some(e) => format!(
@@ -1385,7 +1388,12 @@ impl App {
                     e.cursor()
                 ),
             },
-            rendered.graphics_summary()
+            rendered.graphics_summary(),
+            if self.keyboard_protocol {
+                "kitty protocol"
+            } else {
+                "legacy (no Shift+Enter)"
+            }
         );
         out.trim_end().to_string()
     }
