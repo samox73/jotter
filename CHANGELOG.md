@@ -25,6 +25,8 @@ Every release of jOtter. The same notes are on each [GitHub release](https://git
 - Record scenes in parallel ([4980551](https://github.com/samox73/jotter/commit/498055142189220246b06d39ac03d000a09c59a9))
 - Inline math sizing in the math guide; slash fraction in the demo ([3539ea0](https://github.com/samox73/jotter/commit/3539ea0c27581db94843dbaed66a9d1ff061f3a0))
 - Theme and terminal galleries, verified compatibility table ([a0ea7a9](https://github.com/samox73/jotter/commit/a0ea7a95ba0fb23d020ee7af0243f39c4f170ab8))
+- Changelog from git-cliff, short README ([a5e5182](https://github.com/samox73/jotter/commit/a5e51826a4f5de6d40884cce2031ab4dfb076346))
+- Record clips locally and commit them ([5083c4d](https://github.com/samox73/jotter/commit/5083c4db3f0884ab08c3e318880c18cc8721d120))
 
 ## 0.1.0 (2026-09-25)
 
