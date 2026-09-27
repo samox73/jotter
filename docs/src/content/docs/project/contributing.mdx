@@ -52,4 +52,24 @@ npm run dev        # live preview at http://localhost:4321/jotter/
 
 ## Releases
 
-Pushing a tag like `v0.2.0` builds and publishes everything: static binaries, deb, rpm and apk packages, the GitHub release, and the crates.io package. The tag must match the version in `Cargo.toml`.
+<Steps>
+
+1. Bump `version` in `Cargo.toml` (the Nix flake reads it from there) and run `cargo check` so `Cargo.lock` follows.
+
+2. Regenerate the changelog, naming the new tag, and commit both:
+
+   ```sh
+   git cliff --tag v0.3.0 -o CHANGELOG.md
+   git commit -am "chore: release v0.3.0"
+   ```
+
+3. Tag and push. The tag must match the version in `Cargo.toml`:
+
+   ```sh
+   git tag v0.3.0
+   git push origin main v0.3.0
+   ```
+
+</Steps>
+
+The release workflow then builds static binaries and `.deb`, `.rpm` and `.apk` packages for x86_64 and aarch64, creates the GitHub release with notes from git-cliff, and publishes the crate to crates.io.

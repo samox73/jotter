@@ -71,7 +71,7 @@ export default defineConfig({
           items: [
             'project/contributing',
             'project/architecture',
-            { label: 'Changelog', link: `${repo}/releases`, attrs: { target: '_blank' } },
+            'project/changelog',
           ],
         },
       ],

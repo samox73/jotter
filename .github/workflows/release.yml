@@ -41,6 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # git-cliff reads the history back to the previous tag
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
@@ -53,6 +55,12 @@ jobs:
             for f in deb rpm apk; do ARCH=${a#*:} ~/go/bin/nfpm pkg -f pkg/nfpm.yaml -p $f; done
           done
           sha256sum *.tar.gz *.deb *.rpm *.apk > SHA256SUMS
+      - name: Release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          args: --latest --strip header
+        env:
+          OUTPUT: RELEASE_NOTES.md
       - uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -61,7 +69,7 @@ jobs:
             *.rpm
             *.apk
             SHA256SUMS
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
 
   crates-io:
     needs: build

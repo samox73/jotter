@@ -37,6 +37,10 @@ def encode [raw: string, out: string, name: string] {
     ^ffmpeg -loglevel error -y -i $raw -c:v libvpx-vp9 -crf 38 -b:v 0 -row-mt 1 -pix_fmt yuv420p -an $"($base).webm"
     ^ffmpeg -loglevel error -y -i $raw -c:v libx264 -crf 26 -preset slow -pix_fmt yuv420p -movflags +faststart -an $"($base).mp4"
     ^ffmpeg -loglevel error -y -sseof -0.1 -i $raw -frames:v 1 -c:v libwebp -quality 90 $"($base).webp"
+    # GitHub READMEs can't autoplay video: the hero also becomes a GIF
+    if $name == "hero" {
+        ^ffmpeg -loglevel error -y -i $raw -vf "fps=12,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=none" $"($base).gif"
+    }
 }
 
 # Record one scene on its own sway. Returns null, or the scene's name if it

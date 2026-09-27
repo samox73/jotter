@@ -76,3 +76,7 @@ kbd {
 .gallery figure.media {
   margin: 0;
 }
+
+.changelog > h1:first-child {
+  display: none;
+}
