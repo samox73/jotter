@@ -72,7 +72,7 @@ impl Confirm {
                 "restart kernel? R: restart · a: restart & run all · else cancel".into()
             }
             Confirm::Recover(_, summary) => {
-                format!("{summary} — r: restore it · d: delete it · else keep for now")
+                format!("{summary} — r: restore · d: delete · else keep")
             }
         }
     }
@@ -127,6 +127,8 @@ pub struct App {
     pub should_quit: bool,
     /// One-shot status message.
     pub message: Option<String>,
+    /// The terminal speaks the kitty keyboard protocol (Shift+Enter works).
+    pub keyboard_protocol: bool,
     pub kernel: Option<Kernel>,
     pub kernel_busy: bool,
     /// In-flight executions: msg_id -> cell index (remapped on cell ops).
@@ -309,6 +311,7 @@ impl App {
             scroll: 0,
             should_quit: false,
             message: None,
+            keyboard_protocol: false,
             kernel: None,
             kernel_busy: false,
             running: HashMap::new(),
@@ -370,12 +373,7 @@ impl App {
                     let _ = std::fs::remove_file(&side);
                 }
                 n => {
-                    let summary = format!(
-                        "unsaved autosave from {} ago: {n} cell(s) differ ({} vs {} cells)",
-                        age(when),
-                        saved.cells.len(),
-                        self.notebook.cells.len()
-                    );
+                    let summary = format!("autosave from {} ago, {n} cell(s) differ", age(when));
                     self.confirm = Some(Confirm::Recover(Box::new(saved), summary));
                 }
             },
@@ -1380,7 +1378,7 @@ impl App {
             );
         }
         out += &format!(
-            "editor: {} · graphics: {}\n",
+            "editor: {} · graphics: {} · keys: {}\n",
             match &self.editor {
                 None => "closed".to_string(),
                 Some(e) => format!(
@@ -1390,7 +1388,12 @@ impl App {
                     e.cursor()
                 ),
             },
-            rendered.graphics_summary()
+            rendered.graphics_summary(),
+            if self.keyboard_protocol {
+                "kitty protocol"
+            } else {
+                "legacy (no Shift+Enter)"
+            }
         );
         out.trim_end().to_string()
     }

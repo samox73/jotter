@@ -1,0 +1,23 @@
+---
+// A screenshot recorded by docs/media/record.nu (`still` in a scene) into
+// public/media/. Renders nothing until it has been recorded, like <Clip>.
+import { existsSync } from 'node:fs';
+
+interface Props {
+  name: string;
+  alt: string;
+  caption?: string;
+}
+const { name, alt, caption } = Astro.props;
+// relative to docs/ (where astro runs), not this file: it's bundled at build time
+const recorded = existsSync(`${process.cwd()}/public/media/${name}.webp`);
+---
+
+{
+  recorded && (
+    <figure class="media">
+      <img class="shot" src={`${import.meta.env.BASE_URL}media/${name}.webp`} alt={alt} loading="lazy" />
+      {caption && <figcaption>{caption}</figcaption>}
+    </figure>
+  )
+}

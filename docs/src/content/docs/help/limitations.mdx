@@ -1,0 +1,26 @@
+---
+title: "Known limitations"
+description: "What jOtter deliberately doesn't do, and known rough edges."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Rough edges
+
+- **Wide images are cropped** at the right edge of the terminal instead of scaled down. This keeps the one-time, high-quality downscale and avoids blurry rescaling on every redraw.
+- **Changing the font size re-renders everything.** Output scroll positions reset and images are sent to the terminal again.
+- **The help screen needs about 33 rows**; shorter terminals cut it off.
+- **Neovim backend: no plugin windows.** Pickers, floating windows, file explorers and splits are closed as soon as they open. Popups that don't take focus, like nvim-cmp's menu, are invisible. See [Embedded Neovim](/jotter/guides/neovim/#what-isnt-drawn).
+- **No key remapping** yet.
+
+## Not planned
+
+These are deliberate choices, to keep jOtter small, fast and reliable:
+
+- **Interactive widgets (ipywidgets).** They need a browser-like runtime. jOtter shows a placeholder.
+- **HTML and JavaScript outputs.** jOtter shows the text version when the kernel sends one.
+- **Multiple notebooks in tabs.** Use your terminal's tabs or splits, or a terminal multiplexer.
+- **Connecting to existing or remote kernels.** jOtter must own its kernel process so that interrupts and restarts always work. Run jOtter on the remote machine instead.
+- **Saving image outputs to files.** Use `plt.savefig` in the notebook.
+- **Jupytext and percent-format scripts.** Convert them with `jupytext --to ipynb`.
+- **Windows.** Use WSL.

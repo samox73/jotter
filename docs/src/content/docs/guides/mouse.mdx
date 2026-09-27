@@ -1,0 +1,20 @@
+---
+title: "Mouse"
+description: "Clicking, double-clicking, scrolling, and selecting text with the mouse."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+jOtter works fully from the keyboard, but the mouse is there when you want it.
+
+| Action | Does |
+| --- | --- |
+| Click a cell | Select it |
+| Click inside the cell you are editing | Move the cursor there |
+| Double-click a cell | Edit it in insert mode at that spot |
+| Wheel | Scroll the notebook, or the long output under the pointer |
+| <kbd>Shift</kbd> + drag | Select text with your terminal's own selection |
+
+A wheel gesture sticks to what it started on: if you start scrolling the notebook and the pointer passes over a long output, the notebook keeps scrolling.
+
+Because jOtter captures mouse events, your terminal's normal drag-to-select doesn't reach it. Holding <kbd>Shift</kbd> bypasses this in almost every terminal. To copy a whole cell, <kbd>y</kbd><kbd>y</kbd> is quicker: it puts the source on the clipboard.

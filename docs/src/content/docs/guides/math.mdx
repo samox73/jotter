@@ -1,0 +1,48 @@
+---
+title: "Math and LaTeX"
+description: "Inline and display math in markdown cells, latex cells, and LaTeX outputs, rendered without a TeX installation."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+<Clip name="math" caption="Markdown with inline and display math, and a latex cell" />
+
+jOtter renders LaTeX math as real equations in the terminal. It uses [RaTeX](https://crates.io/crates/ratex-svg), a math renderer built into jOtter, so you don't need a TeX installation.
+
+## In markdown cells
+
+Write math as in Jupyter:
+
+```markdown
+Inline math like $e^{i\pi} + 1 = 0$ flows with the text.
+
+Display math gets its own line:
+
+$$
+\hat H \psi = E \psi, \qquad \hat H = -\frac{\hbar^2}{2m}\nabla^2 + V(\mathbf r)
+$$
+```
+
+Inline math never splits across wrapped lines. It's drawn on the text's baseline at the text's size, within one terminal row; an expression that needs more room, like a fraction in big parentheses, is shrunk to fit. Write such fractions as `1/2` inline, or give the expression its own line with `$$`.
+
+## Latex cells
+
+Press <kbd>m</kbd> until a cell becomes a **latex** cell. Its whole content is rendered as display math; the surrounding `$$` are optional. In the file it is a raw cell with `metadata.format` set to `text/latex`, the same convention JupyterLab and nbconvert use.
+
+## LaTeX outputs
+
+Outputs of type `text/latex` render as equations too. For example, SymPy:
+
+```python
+import sympy as sp
+x = sp.symbols('x')
+sp.init_printing()
+sp.integrate(sp.exp(-x**2), (x, -sp.oo, sp.oo))
+```
+
+## What's supported
+
+RaTeX covers what notebooks typically use: fractions, roots, sub- and superscripts, Greek letters and symbols, operators like `\sum`, `\int` and `\prod`, matrices and `aligned` environments, accents, and `\mathbf`, `\mathrm`, `\mathcal` and similar fonts. It doesn't run TeX macros or load packages. If an equation can't be rendered, jOtter shows its source instead.
+
+Equations are rendered once when the cell is displayed and then cached, so they don't slow scrolling down.

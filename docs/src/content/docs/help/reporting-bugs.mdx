@@ -1,0 +1,32 @@
+---
+title: "Reporting bugs"
+description: "How to report a bug so it can be fixed quickly."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Bugs and feature requests go to [GitHub issues](https://github.com/samox73/jotter/issues). A good report makes a fix much faster.
+
+<Steps>
+
+1. **Check that it still happens** with the [latest release](https://github.com/samox73/jotter/releases/latest), and search the existing issues.
+
+2. **Collect the debug report.** Select the cell where the problem shows and press <kbd>D</kbd>. jOtter shows debug information about that cell and copies it to the clipboard: the jOtter version, the cell's type, id and size, a summary of its outputs, how it was rendered, and the execution and kernel state. It doesn't include your code or output text. Paste it into the issue.
+
+3. **Record a log** if the problem involves the kernel or anything that happens over time:
+
+   ```sh
+   jotter --log /tmp/jotter.log notebook.ipynb
+   ```
+
+   Reproduce the problem, quit, and attach the log.
+
+4. **Say what you expected and what happened**, with the steps to get there. Include your terminal (and version), whether you use tmux, and your `config.toml` if you have one.
+
+</Steps>
+
+<Aside type="caution">
+A log recorded with `--log` contains everything exchanged with the kernel, including your code and its outputs. Remove anything confidential before posting it.
+</Aside>
+
+A minimal notebook that shows the problem is the most useful attachment of all.

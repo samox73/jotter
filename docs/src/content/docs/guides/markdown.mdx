@@ -1,0 +1,28 @@
+---
+title: "Markdown cells"
+description: "What renders in markdown cells: headings, lists, emphasis, links, tables, code, math and images."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+<Clip name="markdown" />
+
+Markdown cells show their rendered form, except while you edit them. Press <kbd>Enter</kbd> or <kbd>i</kbd> to see the source, <kbd>Esc</kbd> to render again.
+
+## What renders
+
+- Headings, with levels styled differently.
+- Bold, italic and inline `code`.
+- Bulleted and numbered lists.
+- Links: the text underlined, followed by the URL.
+- Tables.
+- Fenced code blocks, syntax-highlighted in their language.
+- Inline and display [math](/jotter/guides/math/).
+- Images: cell attachments (images pasted in JupyterLab) and local files, e.g. `![diagram](figures/setup.png)`. Paths are relative to the notebook.
+
+Remote images (`https://…`) are not downloaded; their alt text is shown instead. Raw HTML in markdown shows as text.
+
+## Converting cells
+
+<kbd>m</kbd> cycles the selected cell through code → markdown → latex. The source stays the same; only its type changes. Converting a code cell drops its outputs, as in JupyterLab.

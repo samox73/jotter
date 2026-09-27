@@ -41,26 +41,59 @@ pub fn render_math(latex: &str, font_h: u16) -> Option<RgbaImage> {
     render_scaled(latex, font_h, MathStyle::Display, 1.4, MAX_ROWS, 4.0)
 }
 
+/// Inline math size: one em, as a fraction of the terminal row height. At 0.9
+/// the math font's x-height matches a typical terminal font's, so math letters
+/// are as large as the text around them.
+const INLINE_EM_ROWS: f32 = 0.9;
+/// Where the text baseline sits in a terminal row, from the top: inline math
+/// shares it, so `$E_n$` and `$n = 0$` line up with each other and the prose.
+const INLINE_BASELINE_ROWS: f32 = 0.77;
+
 /// Render inline math in TeX *text style* (like `$...$` in a paragraph:
-/// compact fractions, limits beside operators), always shrunk to exactly one
-/// terminal row — if that's too small to read, the author should use `$$`.
-/// The raster is padded to exactly `font_h` tall with the content vertically
-/// centered, so short symbols sit mid-line and column reservation stays tight.
+/// compact fractions, limits beside operators) into exactly one terminal row.
+/// Every expression gets the same size and baseline, like text; only one that
+/// doesn't fit above or below the baseline (a fraction in big parentheses)
+/// shrinks, and just by what it needs. Width is cropped to the visible ink,
+/// so column reservation stays tight.
 pub fn render_inline(latex: &str, font_h: u16) -> Option<RgbaImage> {
-    let img = render_scaled(latex, font_h, MathStyle::Text, 1.0, 1.0, 0.0)?;
-    // ratex rasters carry loose margins; crop to visible content so the
-    // reserved column count matches what's actually drawn.
-    let img = crop_transparent(img)?;
-    let h = font_h as u32;
-    if img.height() >= h {
-        return Some(img);
+    let (tree, height_em, depth_em) = svg_tree(latex, MathStyle::Text, 0.0)?;
+    let row = font_h as f32;
+    let baseline = INLINE_BASELINE_ROWS * row;
+    // px per em: the common size, unless this expression needs less
+    let mut em = INLINE_EM_ROWS * row;
+    if height_em > 0.0 {
+        em = em.min(baseline / height_em as f32);
     }
-    let mut canvas = RgbaImage::new(img.width(), h); // transparent
-    let top = (h - img.height()) / 2;
-    for (x, y, p) in img.enumerate_pixels() {
-        canvas.put_pixel(x, y + top, *p);
+    if depth_em > 0.0 {
+        em = em.min((row - baseline) / depth_em as f32);
     }
-    Some(canvas)
+    // the SVG is sized in pt, so measure the tree's own px per em
+    let tree_em = tree.size().height() / (height_em + depth_em).max(1e-6) as f32;
+    let scale = em / tree_em;
+    let w = (tree.size().width() * scale).ceil().max(1.0) as u32;
+    let top = (baseline - height_em as f32 * em).round().max(0.0);
+    let mut pixmap = tiny_skia::Pixmap::new(w, font_h as u32)?; // transparent
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale).post_translate(0.0, top),
+        &mut pixmap.as_mut(),
+    );
+    crop_columns(to_rgba(&pixmap)?)
+}
+
+/// tiny-skia pixmaps hold *premultiplied* RGBA; `image` expects straight
+/// alpha. Taking the bytes as they are multiplies every antialiased edge by
+/// its alpha twice: thin, dark, aliased-looking strokes.
+fn to_rgba(pixmap: &tiny_skia::Pixmap) -> Option<RgbaImage> {
+    let data = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|p| {
+            let c = p.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect();
+    RgbaImage::from_raw(pixmap.width(), pixmap.height(), data)
 }
 
 /// Render an SVG document at its intrinsic size (image/svg+xml outputs,
@@ -89,34 +122,22 @@ pub fn render_svg(svg: &str) -> Option<RgbaImage> {
         tiny_skia::Transform::identity(),
         &mut pixmap.as_mut(),
     );
-    RgbaImage::from_raw(w, h, pixmap.data().to_vec())
+    to_rgba(&pixmap)
 }
 
-/// Crop to the bounding box of non-transparent pixels (None if fully empty).
-fn crop_transparent(img: RgbaImage) -> Option<RgbaImage> {
-    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
-    for (x, y, p) in img.enumerate_pixels() {
-        if p.0[3] > 0 {
-            x0 = x0.min(x);
-            y0 = y0.min(y);
-            x1 = x1.max(x);
-            y1 = y1.max(y);
-        }
-    }
-    if x0 == u32::MAX {
-        return None;
-    }
-    Some(image::imageops::crop_imm(&img, x0, y0, x1 - x0 + 1, y1 - y0 + 1).to_image())
+/// Crop to the columns that have visible pixels, keeping the full height, so
+/// the baseline stays put (None if nothing is visible).
+fn crop_columns(img: RgbaImage) -> Option<RgbaImage> {
+    let inked = |x: u32| (0..img.height()).any(|y| img.get_pixel(x, y).0[3] > 0);
+    let x0 = (0..img.width()).find(|&x| inked(x))?;
+    let x1 = (0..img.width()).rev().find(|&x| inked(x))?;
+    Some(image::imageops::crop_imm(&img, x0, 0, x1 - x0 + 1, img.height()).to_image())
 }
 
-fn render_scaled(
-    latex: &str,
-    font_h: u16,
-    style: MathStyle,
-    rows_per_line: f32,
-    max_rows: f32,
-    padding: f64,
-) -> Option<RgbaImage> {
+/// Lay out `latex` and render it to an SVG at SVG_FONT_PX per em, returning
+/// the parsed tree and the expression's height above and depth below the
+/// baseline in em (the baseline sits `height` em below the top, plus padding).
+fn svg_tree(latex: &str, style: MathStyle, padding: f64) -> Option<(usvg::Tree, f64, f64)> {
     let latex = latex.trim();
     if latex.is_empty() {
         return None;
@@ -124,6 +145,7 @@ fn render_scaled(
     let ast = parse(latex).ok()?;
     let layout_opts = LayoutOptions::default().with_style(style).with_color(fg());
     let display_list = to_display_list(&layout(&ast, &layout_opts));
+    let (height, depth) = (display_list.height, display_list.depth);
     let svg = render_to_svg(
         &display_list,
         &SvgOptions {
@@ -134,8 +156,19 @@ fn render_scaled(
             font_dir: String::new(),
         },
     );
-
     let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).ok()?;
+    Some((tree, height, depth))
+}
+
+fn render_scaled(
+    latex: &str,
+    font_h: u16,
+    style: MathStyle,
+    rows_per_line: f32,
+    max_rows: f32,
+    padding: f64,
+) -> Option<RgbaImage> {
+    let (tree, _, _) = svg_tree(latex, style, padding)?;
     let (src_w, src_h) = (tree.size().width().max(1.0), tree.size().height().max(1.0));
     let mut scale = (font_h as f32 * rows_per_line) / SVG_FONT_PX as f32;
     let max_h = max_rows * font_h as f32;
@@ -152,7 +185,7 @@ fn render_scaled(
         tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
-    RgbaImage::from_raw(w, h, pixmap.data().to_vec())
+    to_rgba(&pixmap)
 }
 
 /// Rough unicode approximation for inline math (and the no-graphics fallback).
@@ -247,6 +280,28 @@ mod tests {
                 "right edge {tex}"
             );
         }
+    }
+
+    /// Rows of `img` that have visible pixels: (first, last).
+    fn ink_rows(img: &RgbaImage) -> (u32, u32) {
+        let inked = |y: u32| (0..img.width()).any(|x| img.get_pixel(x, y).0[3] > 0);
+        let rows: Vec<u32> = (0..img.height()).filter(|&y| inked(y)).collect();
+        (rows[0], *rows.last().unwrap())
+    }
+
+    #[test]
+    fn inline_math_shares_one_size_and_baseline() {
+        // `x` alone and `x = 1` have the same letter height and position; a
+        // taller expression next to them doesn't change that
+        let x = ink_rows(&render_inline("x", 32).unwrap());
+        let eq = ink_rows(&render_inline("x = 1", 32).unwrap());
+        assert_eq!(x.1, eq.1, "same baseline");
+        // `1` is taller than `x`, so compare bottoms (baseline) and sizes
+        let x_again = ink_rows(&render_inline("xx", 32).unwrap());
+        assert_eq!(x, x_again, "same size");
+        // a fraction in stretchy parentheses still fits the row
+        let tall = render_inline(r"\left(n + \tfrac{1}{2}\right)", 32).unwrap();
+        assert_eq!(tall.height(), 32);
     }
 
     #[test]

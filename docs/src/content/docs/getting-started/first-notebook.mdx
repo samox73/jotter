@@ -1,0 +1,95 @@
+---
+title: "Your first notebook"
+description: "A five-minute tour. Create a notebook, run code, make a plot, write some math, save and quit."
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+This tour assumes jOtter is [installed](/jotter/getting-started/installation/) and that you have Python with `ipykernel`, `numpy` and `matplotlib`. The quickest setup, in an empty directory:
+
+```sh
+uv venv && uv pip install ipykernel numpy matplotlib
+```
+
+<Clip name="first-notebook" caption="The whole tour in one clip" />
+
+## Open a new notebook
+
+```sh
+jotter tour.ipynb
+```
+
+The file doesn't exist yet, so jOtter starts an empty notebook with one code cell and says `new notebook — w creates tour.ipynb`. Nothing is written to disk until you save. At the bottom, the status line shows the kernel starting and then going idle.
+
+jOtter has two modes, like vim. In **notebook mode** keys act on whole cells: move, run, add, delete. In **edit mode** you type inside a cell. You start in notebook mode.
+
+## Write and run code
+
+<Steps>
+
+1. Press <kbd>i</kbd> to edit the selected cell in insert mode, and type:
+
+   ```python
+   import numpy as np
+   x = np.linspace(0, 2 * np.pi, 200)
+   print("points:", len(x))
+   ```
+
+2. Press <kbd>Shift</kbd>+<kbd>Enter</kbd>. The cell runs and `points: 200` appears below it. The gutter shows the execution count, `[1]`, and how long the run took. You are back in notebook mode.
+
+   <Aside type="note">
+   If your terminal can't tell <kbd>Shift</kbd>+<kbd>Enter</kbd> apart from <kbd>Enter</kbd>, press <kbd>Esc</kbd> and then <kbd>r</kbd>, which does the same thing. [Terminal setup](/jotter/getting-started/terminal-setup/) explains which terminals support it.
+   </Aside>
+
+</Steps>
+
+## Make a plot
+
+Press <kbd>a</kbd> to add a cell after the current one, then <kbd>i</kbd> to edit it, and type:
+
+```python
+import matplotlib.pyplot as plt
+plt.plot(x, np.sin(x))
+plt.show()
+```
+
+Run it with <kbd>Shift</kbd>+<kbd>Enter</kbd>. The figure appears inline, right under the cell. In notebook mode, press <kbd>z</kbd> to view it fullscreen and any key to come back.
+
+While typing, try <kbd>Tab</kbd> after `np.`: a completion popup lists what `numpy` offers. <kbd>Shift</kbd>+<kbd>Tab</kbd> on a name shows its documentation. See [Completion and docs](/jotter/guides/completion/).
+
+## Add a markdown cell with math
+
+<Steps>
+
+1. In notebook mode, press <kbd>b</kbd> to add a cell *before* the selected one.
+
+2. Press <kbd>m</kbd> to turn it into a markdown cell.
+
+3. Press <kbd>i</kbd> and type:
+
+   ```markdown
+   ## A sine wave
+
+   We plot $y = \sin x$ for $x \in [0, 2\pi]$:
+
+   $$\int_0^{2\pi} \sin x \, dx = 0$$
+   ```
+
+4. Press <kbd>Esc</kbd> twice: once to leave insert mode, once to leave the cell. The markdown renders, and so does the math.
+
+</Steps>
+
+## Move around
+
+In notebook mode, <kbd>j</kbd> and <kbd>k</kbd> select the next and previous cell, <kbd>g</kbd> and <kbd>G</kbd> the first and last. <kbd>J</kbd> and <kbd>K</kbd> move the selected cell down and up. <kbd>X</kbd> runs every cell from the top. <kbd>?</kbd> shows all the keys.
+
+## Save and quit
+
+Press <kbd>w</kbd> to save. `tour.ipynb` is now a normal notebook that opens in JupyterLab, VS Code or anything else. Press <kbd>q</kbd> to quit. If there are unsaved changes, jOtter asks whether to save (<kbd>s</kbd>), discard them (<kbd>q</kbd>), or stay (any other key).
+
+## Where next
+
+- [Editing cells](/jotter/guides/editing/): the modal editor in detail.
+- [Running code](/jotter/guides/running-code/): run all, interrupts, restarts and `input()`.
+- [Keybindings](/jotter/reference/keybindings/): everything on one page.

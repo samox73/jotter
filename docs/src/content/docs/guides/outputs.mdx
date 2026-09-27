@@ -1,0 +1,82 @@
+---
+title: "Outputs and images"
+description: "How jOtter shows text, errors, progress bars, images and other rich outputs, and how to scroll and collapse long ones."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+<Clip name="plots" caption="An inline matplotlib figure, zoomed with z" />
+
+jOtter shows cell outputs directly under each cell, as JupyterLab does, and saves them in the notebook.
+
+## Text and errors
+
+Printed text and results appear as plain text, with ANSI colours kept. Errors show the kernel's traceback, coloured.
+
+Output follows Jupyter's rules for streams:
+
+- Consecutive `print` output merges into one block, as JupyterLab saves it.
+- A carriage return (`\r`) overwrites the current line, so progress bars such as [tqdm](https://github.com/tqdm/tqdm) update in place instead of printing a thousand lines.
+- `clear_output()` clears the cell's output, including `clear_output(wait=True)`.
+- Display handles work: `display(obj, display_id=True)` returns a handle whose `.update()` replaces that output wherever it is shown. `tqdm.notebook` uses this.
+
+<Clip name="progress" caption="tqdm and display handles updating in place" />
+
+Each cell keeps at most the last 10,000 lines of stream output, so a runaway loop can't swamp memory.
+
+## Long outputs
+
+Outputs taller than 15 rows (the [`max_output_rows`](/jotter/reference/configuration/#max_output_rows) setting) are shown in a scrollable viewport. While a cell is running, the viewport sticks to the newest line.
+
+| Key | Does |
+| --- | --- |
+| <kbd>[</kbd> <kbd>]</kbd> | Scroll the selected cell's output up / down |
+| mouse wheel over the output | Scroll it |
+| <kbd>o</kbd> | Collapse or expand the output |
+| <kbd>c</kbd> | Clear the selected cell's output |
+| <kbd>C</kbd> | Clear all outputs |
+
+Clearing can be undone with <kbd>u</kbd>.
+
+<Clip name="long-output" />
+
+## Images
+
+PNG, JPEG, GIF and SVG outputs render inline. That covers matplotlib, seaborn, plotnine, PIL images and anything else that displays an image.
+
+In terminals with a graphics protocol the image is sharp; elsewhere it is drawn with half-block characters. See [Terminal setup](/jotter/getting-started/terminal-setup/).
+
+Images taller than 18 rows ([`max_image_rows`](/jotter/reference/configuration/#max_image_rows)) are scaled down once, with high-quality resampling.
+
+### Plots in your terminal's colours
+
+Plotting libraries draw black on white, which is a glaring box on a dark terminal. jOtter shows such plots in your terminal's colours instead: the white background becomes the terminal's background, black text and axes become its foreground, and coloured lines and markers keep their hue. On a light terminal, plots look almost unchanged.
+
+This only changes what you see in jOtter. The notebook's saved outputs, files written with `savefig`, and what collaborators see in JupyterLab keep their original colours, and your plotting code needs no styling.
+
+jOtter recolours images that look like plots: a large white background and no transparency. Photos, and figures you've styled yourself with a transparent or dark background, are shown as they are. Heatmaps and colour maps inside a white figure are recoloured too, and with them their colour bars, so readings stay consistent, but the colours differ from the original. If you'd rather see every image exactly as the kernel sent it, turn this off:
+
+```toml title="~/.config/jotter/config.toml"
+recolor_plots = false
+```
+
+jOtter asks the terminal for its colours at startup. Terminals that don't answer, which is rare, get the original images.
+
+| Key | Does |
+| --- | --- |
+| <kbd>z</kbd> | Show the selected cell's image fullscreen; any key returns |
+| <kbd>Z</kbd> | Toggle native size for the selected cell's images |
+
+<Aside type="caution">
+Images wider than the terminal are cropped at the right edge rather than scaled down. Make figures narrower (`plt.figure(figsize=(6, 3))`) or widen the terminal.
+</Aside>
+
+## Math, markdown and other rich outputs
+
+- `text/latex` outputs, for example from SymPy, render as equations. See [Math and LaTeX](/jotter/guides/math/).
+- `text/markdown` outputs, for example from `IPython.display.Markdown`, render like markdown cells.
+- For everything else, jOtter shows the plain-text version the kernel sends along with it. A pandas DataFrame shows as its text table.
+- When an output has no text version at all, such as an HTML-only output, jOtter shows its type, `[text/html]`, as a placeholder. The output is still kept in the notebook. ipywidgets are not interactive; they show as their text version or a placeholder.
+
+See [Notebook compatibility](/jotter/reference/nbformat/) for the full list.

@@ -1,0 +1,38 @@
+---
+title: "Cell operations"
+description: "Adding, deleting, copying, moving, splitting and merging cells, with undo and redo."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+<Clip name="cell-ops" />
+
+All of these work in notebook mode.
+
+## Adding and deleting
+
+| Key | Does |
+| --- | --- |
+| <kbd>a</kbd> | New code cell after the selected one |
+| <kbd>b</kbd> | New code cell before the selected one |
+| <kbd>d</kbd><kbd>d</kbd> | Delete the selected cell |
+| <kbd>y</kbd><kbd>y</kbd> | Copy the selected cell |
+| <kbd>p</kbd> | Paste the last deleted or copied cell after the selected one |
+
+<kbd>y</kbd><kbd>y</kbd> also puts the cell's source on the system clipboard (through the terminal's OSC 52 support), so you can paste it into another program.
+
+## Moving
+
+<kbd>J</kbd> and <kbd>K</kbd> move the selected cell down and up.
+
+## Split and merge
+
+- <kbd>Ctrl</kbd>+<kbd>\\</kbd> while editing splits the cell at the cursor into two cells.
+- <kbd>M</kbd> merges the selected cell with the one below it.
+
+## Undo and redo
+
+<kbd>u</kbd> undoes the last cell operation: adding, deleting, pasting, moving, splitting, merging, changing a cell's type, clearing outputs. <kbd>Ctrl</kbd>+<kbd>r</kbd> redoes. Any new operation clears the redo history.
+
+This is separate from undo inside a cell, which is part of the [editor](/jotter/guides/editing/).

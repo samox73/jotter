@@ -1,37 +1,36 @@
 //! `~/.config/jotter/config.toml`, read once at startup into a global.
 //! Every field is optional; missing file means defaults.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    /// Images taller than this many terminal rows are downscaled once.
+    // These doc comments are the user documentation: `jotter --generate`
+    // turns them into the docs site's configuration reference (markdown;
+    // an empty `///` line starts a new paragraph).
+    /// Images taller than this many terminal rows are scaled down to fit, once, when the output is first shown. Larger values show plots bigger but push the next cell further down.
     pub max_image_rows: u16,
-    /// Output rows shown per cell before it becomes a scrollable viewport.
+    /// Outputs taller than this many rows are shown in a scrollable viewport instead of in full. Scroll it with `[` and `]` or the mouse wheel; see [long outputs](/jotter/guides/outputs/#long-outputs).
     pub max_output_rows: usize,
-    /// Seconds between autosave-sidecar checks.
+    /// How often, in seconds, jOtter writes an autosave when there are unsaved changes. Autosaves go to `~/.local/state/jotter/autosave/`, never next to the notebook; see [data safety](/jotter/guides/data-safety/#autosave-and-recovery). Values below 1 count as 1.
     pub autosave_secs: u64,
-    /// Syntect theme: base16-ocean.dark (default), base16-ocean.light,
-    /// base16-eighties.dark, base16-mocha.dark, InspiredGitHub,
-    /// Solarized (dark), Solarized (light).
+    /// The syntax-highlighting theme for code cells and fenced code in markdown. One of `base16-ocean.dark`, `base16-ocean.light`, `base16-eighties.dark`, `base16-mocha.dark`, `InspiredGitHub`, `Solarized (dark)` or `Solarized (light)`.
+    ///
+    /// On a light terminal background, use `base16-ocean.light`, `InspiredGitHub` or `Solarized (light)`. See them all in the [theme gallery](/jotter/reference/themes/).
     pub theme: String,
-    /// Cell editor backend: "builtin" (default), or "nvim" — an embedded
-    /// `nvim --embed` owns text/mode/registers (experimental; full modal
-    /// editing: dw, ciw, visual mode, counts, macros, `.`). Falls back to
-    /// builtin when nvim is missing or dies.
+    /// The cell editor: `"builtin"`, jOtter's own vim-style editor, or `"nvim"`, an embedded Neovim with your config and plugins that gives you the full Neovim editing model. The Neovim backend is experimental; see [embedded Neovim](/jotter/guides/neovim/). If Neovim is missing or crashes, jOtter falls back to the builtin editor.
     pub editor: String,
-    /// nvim backend: load the user's init.lua/init.vim and plugins (with
-    /// `g:jotter = 1` set first, so configs can skip UI-only plugins).
-    /// false = clean `-u NONE` nvim.
+    /// With `editor = "nvim"`: load your Neovim config and plugins. jOtter sets `g:jotter = 1` before your config runs, so you can skip plugins that make no sense inside a cell. Set to `false` for a clean Neovim (`-u NONE`).
     pub nvim_user_config: bool,
-    /// Keep IPython's jedi completer (static analysis: slow, but completes
-    /// names not yet executed). Off = IPython's fast live-object completer.
+    /// Python kernels: use IPython's Jedi completer for every completion. Jedi completes names from code that hasn't run yet, but is slow. When `false`, jOtter uses IPython's fast completer and asks Jedi only when the fast one finds nothing; see [completion](/jotter/guides/completion/#where-completions-come-from-python).
     pub jedi: bool,
-    /// Open completion automatically after `.` following a name (Python).
+    /// Open completion automatically when you type `.` after a name. When `false`, completion opens only with `Tab`.
     pub complete_on_dot: bool,
+    /// Show plots in your terminal's colours: a figure's white background becomes the terminal background and black text and axes become the terminal foreground, while coloured lines keep their hue. Only the display changes; the notebook, its saved outputs and files written with `savefig` keep their original colours. It applies to images with a large white background and no transparency, so photos and figures you styled yourself are left alone. See [outputs](/jotter/guides/outputs/#plots-in-your-terminals-colours).
+    pub recolor_plots: bool,
 }
 
 impl Default for Config {
@@ -45,6 +44,7 @@ impl Default for Config {
             nvim_user_config: true,
             jedi: false,
             complete_on_dot: true,
+            recolor_plots: true,
         }
     }
 }

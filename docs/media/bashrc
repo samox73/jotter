@@ -1,0 +1,3 @@
+# The shell in recordings: a plain prompt, no history file.
+PS1='$ '
+HISTFILE=

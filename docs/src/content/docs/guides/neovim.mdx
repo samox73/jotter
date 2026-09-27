@@ -1,0 +1,61 @@
+---
+title: "Embedded Neovim"
+description: "Let a hidden Neovim, with your own config, handle all cell editing while jOtter keeps rendering."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+<Clip name="neovim" caption="A text object, visual mode and undo, inside a cell" />
+
+With `editor = "nvim"` in your [config](/jotter/reference/configuration/#editor), jOtter runs a hidden `nvim --embed` in the background and hands it every key you type in a cell. Neovim does the editing; jOtter still draws everything. You get Neovim's full editing: operators and text objects (`dw`, `ci(`), visual modes, counts, registers, macros, `.` repeat and your own mappings.
+
+```toml title="~/.config/jotter/config.toml"
+editor = "nvim"
+```
+
+Neovim must be on your `PATH`. If it's missing, or it crashes, jOtter switches to the builtin editor and says so in the status line. Text you were typing is kept.
+
+<Aside type="caution">
+The Neovim backend is **experimental**. It works well for editing, but plugins that open windows are not supported (see below).
+</Aside>
+
+## How it behaves
+
+- Each cell gets its own Neovim buffer, so undo history and marks survive switching between cells.
+- The buffer's `filetype` is set from the cell (`python`, `markdown`, …), so filetype plugins and settings apply.
+- `:` and `/` command lines appear in jOtter's status line as you type them.
+- `:w` saves the cell back into the notebook (not the notebook to disk).
+- `:q`, `:wq`, `:x` and `ZZ` leave the cell and keep the edit. `:q!` and `ZQ` leave it and throw the edit away.
+- <kbd>Esc</kbd> in normal mode leaves the cell, as in the builtin editor, and <kbd>Shift</kbd>+<kbd>Enter</kbd> runs it.
+
+## Your config and plugins
+
+By default Neovim loads your `init.lua` or `init.vim` and plugins. Before your config runs, jOtter sets `g:jotter = 1`, so you can skip whatever makes no sense inside a cell:
+
+```lua title="init.lua"
+-- options, keymaps and editing plugins load everywhere
+require('options')
+require('keymaps')
+
+if not vim.g.jotter then
+  -- statusline, dashboard, file explorer, pickers: only outside jOtter
+  require('ui')
+end
+```
+
+Or guard individual plugins, for example with lazy.nvim:
+
+```lua
+{ 'nvim-lualine/lualine.nvim', cond = not vim.g.jotter },
+```
+
+Set [`nvim_user_config = false`](/jotter/reference/configuration/#nvim_user_config) to start a clean Neovim (`-u NONE`) instead.
+
+## What isn't drawn
+
+jOtter only shows the cell's text. Neovim runs without a user interface attached, so nothing it would draw in a window of its own appears: pickers (Telescope, fzf-lua), floating hovers and diagnostics, file explorers, splits and the command-line window.
+
+If such a plugin opens a window anyway, jOtter notices right after the key, closes the window, returns to the cell and says so in the status line. Your cell text is never touched, but the plugin's action is lost. Popups that don't take focus, such as nvim-cmp's completion menu, are simply invisible. jOtter's own [completion](/jotter/guides/completion/) works with this backend.
+
+The fix for all of these is the `vim.g.jotter` guard above.

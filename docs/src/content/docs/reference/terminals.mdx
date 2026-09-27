@@ -1,0 +1,44 @@
+---
+title: "Terminal compatibility"
+description: "How jOtter behaves in each terminal: image protocol, keyboard protocol and known quirks."
+---
+
+import Still from '../../../components/Still.astro';
+
+jOtter works in any terminal with true colour and mouse support, which today is nearly all of them. What differs is how images look and whether modified keys like <kbd>Shift</kbd>+<kbd>Enter</kbd> work. [Terminal setup](/jotter/getting-started/terminal-setup/) explains both.
+
+| Terminal | Images | <kbd>Shift</kbd>+<kbd>Enter</kbd> | Notes |
+| --- | --- | --- | --- |
+| [kitty](https://sw.kovidgoyal.net/kitty/) | kitty graphics | yes | Recommended. |
+| [Ghostty](https://ghostty.org) | kitty graphics | yes | |
+| [foot](https://codeberg.org/dnkl/foot) | sixel | yes | |
+| [WezTerm](https://wezfurlong.org/wezterm/) | iTerm2 protocol | with `enable_kitty_keyboard = true` | |
+| [Alacritty](https://alacritty.org) | half-blocks | yes | No image protocol. |
+| tmux (inside kitty) | the outer terminal's, with `allow-passthrough on` | no | tmux doesn't forward the keyboard protocol. |
+| Konsole, GNOME Terminal, xterm | not tested yet | not tested yet | |
+
+These results come from jOtter's own detection in each terminal (kitty 0.49, Ghostty 1.3, foot 1.27, WezTerm 2026-03, Alacritty 0.17, tmux 3.6), with default settings. The docs' recording rig checks them again whenever it runs. Run jOtter with `--log` to see what it detects in yours: the log's `terminal:` line names the image protocol, the cell size and the keyboard protocol.
+
+**Half-blocks** means images are drawn with Unicode characters at two pixels per cell. Plots stay readable, but fine detail and small text are lost.
+
+**<kbd>Shift</kbd>+<kbd>Enter</kbd>: no** means the terminal doesn't use the kitty keyboard protocol. Use <kbd>r</kbd> (run and advance) and <kbd>Space</kbd> (run in place) instead.
+
+## Gallery
+
+The same notebook in each terminal:
+
+<div class="gallery">
+  <Still name="term-kitty" alt="jOtter in kitty: a sharp plot and rendered math" caption="kitty" />
+  <Still name="term-ghostty" alt="jOtter in Ghostty: a sharp plot and rendered math" caption="Ghostty" />
+  <Still name="term-foot" alt="jOtter in foot: a sharp plot (sixel) and rendered math" caption="foot" />
+  <Still name="term-wezterm" alt="jOtter in WezTerm: a sharp plot (iTerm2 protocol) and rendered math" caption="WezTerm" />
+  <Still name="term-alacritty" alt="jOtter in Alacritty: the plot and math drawn with half-block characters" caption="Alacritty (half-blocks)" />
+</div>
+
+## Known quirks
+
+- Changing the font size (terminal zoom) makes jOtter re-render every cell for the new cell size. Output scroll positions reset and images are sent to the terminal again.
+- The help screen (<kbd>?</kbd>) needs about 33 rows; in shorter terminals it is cut off.
+- If jOtter is killed with `kill -9`, the terminal isn't restored. Run `reset` to fix it. In kitty, leftover images are cleared the next time jOtter starts.
+
+Using a terminal not listed here? Please [report how it works](https://github.com/samox73/jotter/issues/new), with the `terminal:` line from a `--log` run, so this table can include it.

@@ -1,0 +1,24 @@
+---
+title: "External editor"
+description: "Edit a cell in $VISUAL or $EDITOR and bring the result back into the notebook."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+<Clip name="external-editor" />
+
+Press <kbd>E</kbd> in notebook mode to open the selected cell in your editor. jOtter steps aside, your editor takes over the terminal, and when you save and quit, the new text replaces the cell's source.
+
+The editor is `$VISUAL`, then `$EDITOR`, then `vi`:
+
+```sh
+EDITOR=hx jotter notebook.ipynb
+```
+
+The cell is written to a temporary file whose extension matches the cell's language (`.py`, `.jl`, `.md`, …), so your editor's syntax highlighting, language server and formatter all apply.
+
+- If the editor exits with an error (in vim: `:cq`), the cell is left unchanged.
+- The edit can be undone with <kbd>u</kbd> like any other cell change.
+
+For modal editing without leaving jOtter, see the [embedded Neovim backend](/jotter/guides/neovim/).

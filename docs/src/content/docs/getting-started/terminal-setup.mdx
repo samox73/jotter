@@ -1,0 +1,50 @@
+---
+title: "Terminal setup"
+description: "Which terminals give you inline images and the full keyboard, and how to set up tmux."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+jOtter runs in any terminal. Two terminal features make it much nicer, and not every terminal has them:
+
+- **Graphics.** Plots and equations render as real images in terminals that support an image protocol. Everywhere else they are drawn with Unicode half-block characters: recognisable, but blocky.
+- **The kitty keyboard protocol.** Most terminals send the same bytes for <kbd>Enter</kbd>, <kbd>Shift</kbd>+<kbd>Enter</kbd> and <kbd>Ctrl</kbd>+<kbd>Enter</kbd>. With this protocol jOtter can tell them apart, so <kbd>Shift</kbd>+<kbd>Enter</kbd> runs a cell like in JupyterLab.
+
+jOtter detects both when it starts and needs no configuration. See the [terminal compatibility table](/jotter/reference/terminals/) for details on each terminal.
+
+## Recommended: kitty
+
+[kitty](https://sw.kovidgoyal.net/kitty/) supports both, which makes it the best-supported terminal. Images are sharp, scrolling doesn't flicker, and every key combination is distinct.
+
+## Other terminals
+
+**Images:** jOtter uses the best protocol your terminal offers: kitty graphics, then sixel, then the iTerm2 protocol, then half-blocks. Ghostty uses kitty graphics, foot uses sixel and WezTerm the iTerm2 protocol; all of them show sharp images. Alacritty has no image protocol.
+
+**Keys:** kitty, Ghostty, foot and Alacritty speak the kitty keyboard protocol. WezTerm does with `enable_kitty_keyboard = true` in its config. Without it, use these instead:
+
+| Instead of | Use |
+| --- | --- |
+| <kbd>Shift</kbd>+<kbd>Enter</kbd> (run and advance) | <kbd>r</kbd> in notebook mode |
+| <kbd>Ctrl</kbd>+<kbd>Enter</kbd> (run in place) | <kbd>Space</kbd> in notebook mode |
+
+Both work in every terminal. To run a cell you are editing, press <kbd>Esc</kbd> first.
+
+## tmux
+
+Inside tmux, images need passthrough enabled. Add this to `~/.tmux.conf` and restart tmux:
+
+```sh
+set -g allow-passthrough on
+```
+
+tmux doesn't forward the kitty keyboard protocol, so use <kbd>r</kbd> and <kbd>Space</kbd> to run cells there. <kbd>Ctrl</kbd>+<kbd>\\</kbd> (split a cell) may reach jOtter as <kbd>Ctrl</kbd>+<kbd>4</kbd>; jOtter treats both the same.
+
+## Colours and fonts
+
+jOtter uses the terminal's colours for its interface and a [syntax theme](/jotter/reference/configuration/#theme) for code. The default theme is dark; on a light terminal background, set `theme = "base16-ocean.light"` in your config.
+
+Images are sized in terminal cells, so they follow your font size. If you zoom the terminal, jOtter re-renders every cell for the new size.
+
+<Aside type="tip">
+Text selection: jOtter captures the mouse, so hold <kbd>Shift</kbd> while dragging to select text the way your terminal normally does.
+</Aside>

@@ -1,0 +1,6 @@
+# Plot settings for the recordings (record.nu points MPLCONFIGDIR here), so
+# the example notebooks carry no styling code. Colours are left alone: jotter
+# shows plots in the terminal's colours by itself (recolor_plots).
+# The capture is HiDPI (scale 2): twice the usual pixels per inch.
+figure.figsize: 6.5, 3
+figure.dpi: 200

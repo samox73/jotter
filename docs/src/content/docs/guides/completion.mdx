@@ -1,0 +1,36 @@
+---
+title: "Completion and docs"
+description: "Tab completion from the kernel and Shift+Tab documentation, in both editors."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+<Clip name="completion" caption="Completion after a dot, then the docs for the highlighted entry" />
+
+jOtter asks the kernel for completions and documentation, like JupyterLab. Both work with the builtin editor and with the [Neovim backend](/jotter/guides/neovim/).
+
+## Completion
+
+In insert mode, press <kbd>Tab</kbd> after a name. Typing `.` after a name opens completion by itself (turn that off with [`complete_on_dot`](/jotter/reference/configuration/#complete_on_dot)). <kbd>Tab</kbd> at the start of a line, or after a space, indents as usual.
+
+The popup lists each candidate with its kind (function, module, …) and signature when the kernel provides them. It filters as you keep typing.
+
+| Key | Does |
+| --- | --- |
+| <kbd>Tab</kbd>, <kbd>↓</kbd>, <kbd>Ctrl</kbd>+<kbd>n</kbd> | Next entry |
+| <kbd>↑</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd> | Previous entry |
+| <kbd>Enter</kbd> | Accept |
+| <kbd>Esc</kbd> | Close the popup |
+
+### Where completions come from (Python)
+
+IPython has two completers. jOtter uses the fast one first: it looks at live objects, answers in milliseconds, but only knows about code that has already run. When it finds nothing, for example `np.` before the import cell has run, jOtter asks once more with Jedi, which reads the code without running it. Jedi is slower: the first request in a session takes about a second.
+
+Plain names also complete from the notebook's own identifiers, nearest first, so `np` completes right after you type `import numpy as np`, before running anything.
+
+Set [`jedi = true`](/jotter/reference/configuration/#jedi) to use Jedi for every request.
+
+## Documentation
+
+<kbd>Shift</kbd>+<kbd>Tab</kbd> shows the documentation for the name under the cursor, or for the highlighted entry when the completion popup is open. Documentation comes from the running kernel, so the cell that defines or imports the name must have run. Any key closes the docs.

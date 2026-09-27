@@ -1,0 +1,50 @@
+---
+title: "Data safety"
+description: "Atomic saves, autosave and crash recovery, and what happens when the file changes on disk."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+<Clip name="recovery" caption="Restoring an autosave after a crash" />
+
+jOtter is built not to lose your work, and not to damage notebooks written by other tools.
+
+## Saving
+
+| Key | Does |
+| --- | --- |
+| <kbd>w</kbd> | Save |
+| <kbd>W</kbd> | Save even if the file changed on disk |
+| <kbd>S</kbd> | Save as: type a path, <kbd>Enter</kbd> |
+
+Saves are atomic: jOtter writes a temporary file, flushes it to disk, and renames it over the notebook. A crash or power cut during a save leaves the old file intact, never a half-written one.
+
+**Save as** asks before overwriting an existing file: press <kbd>Enter</kbd> a second time to confirm. After saving under a new name you keep working on the new file. The kernel keeps running in the original notebook's directory.
+
+jOtter preserves everything it doesn't use itself: cell ids, metadata, attachments and fields written by other tools, so notebooks round-trip unchanged. See [Notebook compatibility](/jotter/reference/nbformat/).
+
+## Quitting
+
+<kbd>q</kbd> quits. With unsaved changes, jOtter asks: <kbd>s</kbd> saves and quits, <kbd>q</kbd> quits without saving, any other key stays. If you discard, the autosave stays behind, just in case.
+
+If the terminal is closed or jOtter is killed with `SIGTERM` or `SIGHUP`, it writes an autosave before exiting.
+
+## Autosave and recovery
+
+Every 30 seconds ([`autosave_secs`](/jotter/reference/configuration/#autosave_secs)), if anything changed, jOtter writes a copy of the notebook to its state directory, `~/.local/state/jotter/autosave/`. Never next to the notebook, so it doesn't clutter your git status. A normal save removes the autosave.
+
+When you open a notebook that has an autosave different from the file, for example after a crash, jOtter says how many cells differ and asks:
+
+- <kbd>r</kbd> restores the autosave. It is loaded as unsaved changes; the file itself is only overwritten when you press <kbd>w</kbd>.
+- <kbd>d</kbd> deletes the autosave.
+- Any other key keeps it for now. The next autosave, after any change, replaces it.
+
+## When the file changes on disk
+
+If another program changes the notebook while it's open in jOtter (a `git checkout`, JupyterLab, a script), jOtter notices when its window regains focus, or within the autosave interval:
+
+- If you have no unsaved changes, it reloads the file silently.
+- If you do, it asks: <kbd>l</kbd> loads the file from disk and drops your changes; any other key keeps yours.
+
+A plain <kbd>w</kbd> never silently overwrites a file that changed since you opened or last saved it. jOtter warns instead, and <kbd>W</kbd> overwrites deliberately.

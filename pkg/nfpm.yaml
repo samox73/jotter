@@ -9,6 +9,14 @@ license: MIT OR Apache-2.0
 contents:
   - src: ./jotter
     dst: /usr/bin/jotter
+  - src: ./man/jotter.1
+    dst: /usr/share/man/man1/jotter.1
+  - src: ./completions/jotter.bash
+    dst: /usr/share/bash-completion/completions/jotter
+  - src: ./completions/_jotter
+    dst: /usr/share/zsh/site-functions/_jotter
+  - src: ./completions/jotter.fish
+    dst: /usr/share/fish/vendor_completions.d/jotter.fish
   - src: ./LICENSE-MIT
     dst: /usr/share/licenses/jotter/LICENSE-MIT
   - src: ./LICENSE-APACHE

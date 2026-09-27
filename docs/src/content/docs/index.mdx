@@ -1,0 +1,91 @@
+---
+title: "jOtter"
+description: "A fast Jupyter notebook TUI. Open, edit and run real .ipynb notebooks in your terminal, with vim keys, inline plots and rendered LaTeX."
+template: splash
+hero:
+  tagline: A fast Jupyter notebook TUI. Open, edit and run real <code>.ipynb</code> notebooks in your terminal, with vim keys, inline plots and rendered LaTeX.
+  image:
+    file: ../../assets/otter.png
+    alt: The jOtter mascot, an otter holding a notepad
+  actions:
+    - text: Install
+      link: /jotter/getting-started/installation/
+      icon: right-arrow
+    - text: Your first notebook
+      link: /jotter/getting-started/first-notebook/
+      variant: minimal
+    - text: GitHub
+      link: https://github.com/samox73/jotter
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../components/Clip.astro';
+
+<Clip name="hero" alt="A terminal: jotter opens a notebook and runs it top to bottom, showing a markdown cell with a rendered equation, code cells with their output, and an inline plot of a damped oscillation" />
+
+## Why jOtter
+
+<CardGrid>
+  <Card title="Your notebooks, untouched" icon="document">
+    Opens and saves `.ipynb` losslessly. Cell ids, metadata and fields written by other tools survive the round trip, so collaborators on JupyterLab never notice.
+  </Card>
+  <Card title="Fast" icon="rocket">
+    Redraws take single-digit microseconds. Cells are rendered once and cached, so holding a key down is a non-event, even in long notebooks full of plots.
+  </Card>
+  <Card title="Vim keys everywhere" icon="pencil">
+    Move between cells with `j`/`k`, edit with a modal editor, or let an embedded Neovim with your own config drive cell editing.
+  </Card>
+  <Card title="Plots and math in the terminal" icon="seti:image">
+    matplotlib figures render inline through the kitty graphics protocol, and `$…$` math renders as real equations. No TeX installation needed.
+  </Card>
+  <Card title="Any kernel" icon="seti:python">
+    Runs any Jupyter kernelspec and finds your project's virtualenv on its own: uv, poetry, conda, pixi, or anything else that installs `ipykernel`.
+  </Card>
+  <Card title="Hard to lose work" icon="approve-check">
+    Atomic saves, autosave outside your repository, crash recovery, and a warning instead of a silent overwrite when the file changed on disk.
+  </Card>
+</CardGrid>
+
+## Install
+
+<Tabs syncKey="distro">
+  <TabItem label="Debian / Ubuntu">
+    ```sh
+    # download jotter_<version>_amd64.deb from the latest release, then:
+    sudo apt install ./jotter_*_amd64.deb
+    ```
+  </TabItem>
+  <TabItem label="Fedora / openSUSE">
+    ```sh
+    sudo dnf install ./jotter-*.x86_64.rpm
+    ```
+  </TabItem>
+  <TabItem label="Nix">
+    ```sh
+    nix run github:samox73/jotter -- notebook.ipynb
+    ```
+  </TabItem>
+  <TabItem label="Cargo">
+    ```sh
+    cargo install jotter-tui --locked
+    ```
+  </TabItem>
+  <TabItem label="Any Linux">
+    ```sh
+    curl -L https://github.com/samox73/jotter/releases/latest/download/jotter-x86_64-linux.tar.gz | tar xz jotter
+    ```
+  </TabItem>
+</Tabs>
+
+All options, including Alpine and aarch64, are in the [installation guide](/jotter/getting-started/installation/).
+
+## Next steps
+
+<CardGrid>
+  <LinkCard title="Your first notebook" description="Create a notebook, run code, make a plot, save. Five minutes." href="/jotter/getting-started/first-notebook/" />
+  <LinkCard title="Keybindings" description="Every key, on one page." href="/jotter/reference/keybindings/" />
+  <LinkCard title="Terminal setup" description="Get inline images and every key working in your terminal." href="/jotter/getting-started/terminal-setup/" />
+  <LinkCard title="Configuration" description="Themes, image sizes, autosave and the Neovim backend." href="/jotter/reference/configuration/" />
+</CardGrid>

@@ -1,0 +1,56 @@
+---
+title: "Editing cells"
+description: "The modal cell editor: notebook mode, edit mode, and the vim keys the builtin editor understands."
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Clip from '../../../components/Clip.astro';
+
+<Clip name="editing" caption="Editing a cell with vim motions" />
+
+jOtter is modal, like vim. **Notebook mode** works on whole cells: selecting, running, adding, deleting. **Edit mode** works on the text inside one cell, with its own vim-style normal and insert modes. The [status line](/jotter/guides/running-code/#status-line) shows the mode (`VIEW` in notebook mode), and the cursor shape changes with it: a block in normal mode, a bar in insert mode.
+
+## Entering and leaving a cell
+
+| Key | Does |
+| --- | --- |
+| <kbd>Enter</kbd> | Edit the selected cell, in normal mode |
+| <kbd>i</kbd> | Edit in insert mode, cursor at the start |
+| <kbd>A</kbd> | Edit in insert mode, cursor at the end |
+| double-click | Edit in insert mode at the click |
+| <kbd>Esc</kbd> | Insert mode → normal mode; normal mode → leave the cell |
+
+Leaving the cell keeps your changes in the notebook (it isn't saved to disk until you press <kbd>w</kbd>). <kbd>Shift</kbd>+<kbd>Enter</kbd> and <kbd>Ctrl</kbd>+<kbd>Enter</kbd> work inside the editor too: they leave the cell and run it.
+
+## The builtin editor
+
+The default editor covers the vim keys you use most:
+
+| Keys | Does |
+| --- | --- |
+| <kbd>h</kbd> <kbd>j</kbd> <kbd>k</kbd> <kbd>l</kbd>, arrows | Move |
+| <kbd>w</kbd> <kbd>b</kbd> <kbd>e</kbd> | Next word, previous word, end of word |
+| <kbd>0</kbd> <kbd>^</kbd> <kbd>$</kbd> | Line start, first non-blank, line end |
+| <kbd>g</kbd><kbd>g</kbd> <kbd>G</kbd> | First line, last line |
+| <kbd>i</kbd> <kbd>a</kbd> <kbd>I</kbd> <kbd>A</kbd> | Insert before / after the cursor, at line start / end |
+| <kbd>o</kbd> <kbd>O</kbd> | Open a line below / above |
+| <kbd>x</kbd> <kbd>D</kbd> <kbd>d</kbd><kbd>d</kbd> | Delete a character, to end of line, the line |
+| <kbd>y</kbd><kbd>y</kbd> <kbd>p</kbd> <kbd>P</kbd> | Yank the line, put below / above |
+| <kbd>u</kbd> <kbd>Ctrl</kbd>+<kbd>r</kbd> | Undo, redo |
+
+In insert mode, <kbd>Tab</kbd> inserts four spaces, or opens [completion](/jotter/guides/completion/) right after a name. <kbd>Ctrl</kbd>+<kbd>\\</kbd> [splits the cell](/jotter/guides/cell-operations/#split-and-merge) at the cursor.
+
+The builtin editor deliberately stops there: no counts, no text objects, no visual mode, no macros. For those, you have two options:
+
+- Set `editor = "nvim"` and an [embedded Neovim](/jotter/guides/neovim/) handles all cell editing, with your own config.
+- Press <kbd>E</kbd> in notebook mode to edit the cell in [your `$EDITOR`](/jotter/guides/external-editor/).
+
+## Long lines
+
+Long lines wrap to the terminal width instead of running off the edge, both while editing and when displayed. Wrapping is visual only: the source keeps its lines exactly as you typed them.
+
+## Cell types
+
+<kbd>m</kbd> cycles the selected cell through **code → markdown → latex**. A latex cell is a raw cell marked as `text/latex`, rendered entirely as math. See [Markdown cells](/jotter/guides/markdown/) and [Math and LaTeX](/jotter/guides/math/).
+
+Code cells are highlighted in the notebook's language (Python, Julia, R, …), taken from the notebook's metadata.
