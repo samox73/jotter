@@ -25,18 +25,24 @@ export def key [...keys: string, --gap: duration = 120ms] {
     }
 }
 
-# Type text like a person would; newlines press Enter. Two characters per
-# remote-control call keeps the pace natural despite each call's overhead.
-export def send [text: string, --delay: duration = 25ms] {
-    let lines = $text | lines
-    for line in ($lines | enumerate) {
-        for chunk in ($line.item | split chars | chunks 2) {
-            $chunk | str join | rc send-text --stdin
-            sleep $delay
+# Type text like a person would, one character every `delay`; newlines press
+# Enter. The pace follows a fixed schedule rather than sleeping after each
+# remote-control call, so the calls' uneven overhead doesn't show up as
+# jerky typing in the clip. `--delay 0ms` sends each line at once (off camera).
+export def send [text: string, --delay: duration = 60ms] {
+    if $delay == 0ms {
+        let lines = $text | lines
+        for line in ($lines | enumerate) {
+            $line.item | rc send-text --stdin
+            if $line.index < ($lines | length) - 1 { rc send-key enter }
         }
-        if $line.index < ($lines | length) - 1 {
-            key enter --gap $delay
-        }
+        return
+    }
+    let start = date now
+    for c in ($text | split chars | enumerate) {
+        if $c.item == "\n" { rc send-key enter } else { $c.item | rc send-text --stdin }
+        let wait = $start + $delay * ($c.index + 1) - (date now)
+        if $wait > 0sec { sleep $wait }
     }
 }
 

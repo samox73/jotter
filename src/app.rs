@@ -1769,7 +1769,10 @@ pub(super) mod tests {
             &mut r,
         );
         assert!(!app.show_help && app.logs.is_none());
-        app.on_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), &mut r);
+        app.on_key(
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            &mut r,
+        );
         assert_eq!(app.stdin_req.as_ref().unwrap().buf, "a");
     }
 
