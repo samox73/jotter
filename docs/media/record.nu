@@ -45,7 +45,7 @@ def encode [raw: string, out: string, name: string] {
 
 # Record one scene on its own sway. Returns null, or the scene's name if it
 # failed (its logs are kept and their path printed).
-def record-scene [name: string, repo: string, out: string, python_prefix: string]: nothing -> any {
+def record-scene [name: string, repo: string, out: string, python_prefix: string, gl_threads: int]: nothing -> any {
     print $"── ($name)"
     # sway's socket path must fit in 108 bytes, so keep the runtime dir short
     let run = ($env.XDG_RUNTIME_DIR? | default "/tmp") | path join $"jrec-(random chars --length 6)"
@@ -82,9 +82,10 @@ def record-scene [name: string, repo: string, out: string, python_prefix: string
         MPLCONFIGDIR: $media # its matplotlibrc: figure size and HiDPI
         EDITOR: nvim # XDG_CONFIG_HOME is empty, so a clean nvim
         PATH: ($env.PATH | prepend ($repo | path join target release))
-        # kitty renders with software OpenGL; cap its threads so scenes
-        # recording side by side don't starve each other
-        LP_NUM_THREADS: "2"
+        # kitty renders with software OpenGL: with too few threads it repaints
+        # a few times a second and clips stutter (2 threads: 14 of 20 typed
+        # characters reached the capture). Each scene gets its share of cores.
+        LP_NUM_THREADS: ($gl_threads | into string)
         JREC_KITTY: $sock
         JREC_RUN: $run
         JREC_OUT: $out
@@ -132,7 +133,7 @@ def record-scene [name: string, repo: string, out: string, python_prefix: string
 
 def main [
     ...scenes: string
-    --jobs (-j): int # scenes recorded at once (default: a third of the CPU cores)
+    --jobs (-j): int # scenes recorded at once (default: a sixth of the CPU cores)
 ] {
     let repo = $media | path dirname | path dirname
     let out = $repo | path join docs public media
@@ -142,7 +143,9 @@ def main [
     } else {
         $scenes
     }
-    let jobs = $jobs | default ([1 ((sys cpu | length) // 3)] | math max)
+    let cores = sys cpu | length
+    let jobs = $jobs | default ([1 ($cores // 6)] | math max)
+    let gl_threads = [2 ($cores // $jobs)] | math max
     # nothing a scene starts may reach the real desktop: no X11 display, and
     # the only Wayland display is each scene's headless sway
     hide-env -i DISPLAY WAYLAND_DISPLAY WAYLAND_SOCKET SWAYSOCK
@@ -153,12 +156,12 @@ def main [
 
     print $"recording ($names | length) scene\(s), ($jobs) at a time"
     let failed = $names | par-each --threads $jobs {|name|
-        record-scene $name $repo $out $python_prefix
+        record-scene $name $repo $out $python_prefix $gl_threads
     } | compact
     # a scene that failed on a busy machine gets one more try, alone
     let failed = $failed | each {|name|
         print $"── retrying ($name)"
-        record-scene $name $repo $out $python_prefix
+        record-scene $name $repo $out $python_prefix $gl_threads
     } | compact
     rm -rf /tmp/jotter-demo
     if not ($failed | is-empty) {

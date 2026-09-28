@@ -2,7 +2,7 @@
 
 # scenes to record (default: all), e.g. make record SCENES="hero plots"
 SCENES ?=
-# scenes recorded at once (default: a third of the CPU cores)
+# scenes recorded at once (default: a sixth of the CPU cores)
 JOBS ?=
 
 install:
