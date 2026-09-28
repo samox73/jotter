@@ -1604,6 +1604,14 @@ impl App {
                 prompt,
                 password,
             } => {
+                // overlays take keys first: close them so typing reaches the box
+                if self.zoom.take().is_some() {
+                    self.message = None; // "zoom — any key closes"
+                }
+                self.show_help = false;
+                self.debug = None;
+                self.logs = None;
+                self.pager = None;
                 self.stdin_req = Some(StdinReq {
                     prompt,
                     buf: String::new(),
@@ -1741,6 +1749,28 @@ pub(super) mod tests {
             assert_eq!(c.outputs.as_ref().unwrap()[0]["data"]["text/plain"], "new");
         }
         assert!(app.dirty);
+    }
+
+    #[test]
+    fn input_request_closes_overlays_so_keys_reach_the_box() {
+        let (mut app, mut r) = one_cell_app("input-overlay");
+        app.show_help = true;
+        app.logs = Some(0);
+        let request = jupyter_protocol::messaging::JupyterMessage::new(
+            jupyter_protocol::messaging::InputRequest::default(),
+            None,
+        );
+        app.apply_kernel_event(
+            Event::Input {
+                request: Box::new(request),
+                prompt: "name: ".into(),
+                password: false,
+            },
+            &mut r,
+        );
+        assert!(!app.show_help && app.logs.is_none());
+        app.on_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), &mut r);
+        assert_eq!(app.stdin_req.as_ref().unwrap().buf, "a");
     }
 
     #[test]
