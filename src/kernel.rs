@@ -308,7 +308,15 @@ impl Kernel {
         });
         let reply_tx = tx.clone();
         tokio::spawn(async move {
-            while let Ok(msg) = shell_recv.read().await {
+            loop {
+                let msg = match shell_recv.read().await {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        log::warn!("shell read failed: {e}");
+                        let _ = reply_tx.send(Event::Info(format!("kernel connection lost: {e}")));
+                        break;
+                    }
+                };
                 let parent = parent_id(&msg);
                 let event = match msg.content {
                     JupyterMessageContent::ExecuteReply(_) => Event::Done { parent },
