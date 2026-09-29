@@ -4,7 +4,7 @@
 use anyhow::{Context, Result, anyhow};
 use jupyter_protocol::messaging::{
     CompleteRequest, ExecuteRequest, ExecutionState, InputReply, InspectRequest, InterruptRequest,
-    JupyterMessage, JupyterMessageContent,
+    JupyterMessage, JupyterMessageContent, ReplyStatus,
 };
 use jupyter_protocol::{ConnectionInfo, Transport};
 use serde::Serialize;
@@ -296,13 +296,56 @@ impl Kernel {
             }
         });
 
-        // shell: sender task + reply pump
+        // shell: sender task + reply pump. One request in flight at a time:
+        // ipykernel <= 7.3 can strand a request that arrives while it sends a
+        // reply (edge-triggered ZMQ_FD, ipython/ipykernel#1529), leaving the
+        // kernel idle with our request unread. The kernel runs shell requests
+        // one by one anyway, so waiting for each reply costs nothing.
         let (mut shell_send, mut shell_recv) = shell.split();
         let (shell_tx, mut shell_rx) = mpsc::unbounded_channel::<JupyterMessage>();
+        // (parent, the reply was a failed execute)
+        let (replied_tx, mut replied_rx) = mpsc::unbounded_channel::<(String, bool)>();
+        let abort_tx = tx.clone();
         tokio::spawn(async move {
-            while let Some(msg) = shell_rx.recv().await {
+            let mut kept = std::collections::VecDeque::new();
+            loop {
+                let msg = match kept.pop_front() {
+                    Some(msg) => msg,
+                    None => match shell_rx.recv().await {
+                        Some(msg) => msg,
+                        None => break,
+                    },
+                };
+                let id = msg.header.msg_id.clone();
+                let stops = stops_on_error(&msg);
                 if shell_send.send(msg).await.is_err() {
                     break;
+                }
+                let failed = loop {
+                    match replied_rx.recv().await {
+                        Some((parent, failed)) if parent == id => break failed,
+                        Some(_) => {}   // a reply to someone else's request
+                        None => return, // reply pump gone: connection lost
+                    }
+                };
+                // stop_on_error: the kernel only aborts runs it has queued,
+                // which is none now, so skip the ones queued here instead,
+                // ending each as an aborted run ends (reply, then idle)
+                if stops && failed {
+                    while let Ok(next) = shell_rx.try_recv() {
+                        if stops_on_error(&next) {
+                            let parent = next.header.msg_id;
+                            let _ = abort_tx.send(Event::Done {
+                                parent: parent.clone(),
+                            });
+                            let _ = abort_tx.send(Event::Status {
+                                parent,
+                                busy: false,
+                            });
+                        } else {
+                            kept.push_back(next);
+                        }
+                    }
                 }
             }
         });
@@ -318,6 +361,11 @@ impl Kernel {
                     }
                 };
                 let parent = parent_id(&msg);
+                let failed = matches!(
+                    &msg.content,
+                    JupyterMessageContent::ExecuteReply(x) if x.status != ReplyStatus::Ok
+                );
+                let _ = replied_tx.send((parent.clone(), failed)); // next request may go
                 let event = match msg.content {
                     JupyterMessageContent::ExecuteReply(_) => Event::Done { parent },
                     JupyterMessageContent::CompleteReply(x) => Event::Complete {
@@ -511,6 +559,11 @@ fn completion_types(meta: &serde_json::Map<String, Value>) -> HashMap<String, (S
         .collect()
 }
 
+/// A run that should skip the runs queued behind it when it fails.
+fn stops_on_error(msg: &JupyterMessage) -> bool {
+    matches!(&msg.content, JupyterMessageContent::ExecuteRequest(x) if x.stop_on_error)
+}
+
 fn parent_id(msg: &JupyterMessage) -> String {
     msg.parent_header
         .as_ref()
@@ -647,6 +700,61 @@ mod tests {
             {
                 assert!(text.is_some_and(|t| t.contains("len")));
                 break;
+            }
+        }
+    }
+
+    /// A burst of requests all get answered, and a failed run skips the runs
+    /// queued behind it but not other requests (ignored: needs ipykernel).
+    #[tokio::test]
+    #[ignore = "spawns a real python kernel (needs ipykernel)"]
+    async fn burst_and_stop_on_error_on_real_kernel() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        Kernel::launch("python3".into(), std::env::temp_dir(), tx, 1).await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        let mut next = async || {
+            tokio::time::timeout_at(deadline, rx.recv())
+                .await
+                .expect("timed out waiting for kernel event")
+                .expect("event channel closed")
+        };
+        let kernel = loop {
+            if let Event::Ready(k) = next().await {
+                break *k;
+            }
+        };
+        let mut inspects: std::collections::HashSet<String> =
+            (0..30).map(|_| kernel.inspect("len".into(), 3)).collect();
+        let fails = kernel.execute("1/0".into());
+        let skipped = kernel.execute("print('skipped')".into());
+        inspects.insert(kernel.inspect("len".into(), 3)); // queued behind, still sent
+        let (mut failed, mut skip_done, mut skip_idle) = (false, false, false);
+        while !(inspects.is_empty() && failed && skip_done && skip_idle) {
+            match next().await {
+                Event::Inspect { parent, .. } => {
+                    inspects.remove(&parent);
+                }
+                Event::Done { parent } if parent == fails => failed = true,
+                Event::Done { parent } if parent == skipped => skip_done = true,
+                Event::Status { parent, busy } if parent == skipped => skip_idle = !busy,
+                Event::Output { parent, .. } | Event::ExecutionCount { parent, .. }
+                    if parent == skipped =>
+                {
+                    panic!("the run queued behind a failure ran")
+                }
+                _ => {}
+            }
+        }
+        // runs queued after the failure has been handled run as usual
+        let after = kernel.execute("print('after')".into());
+        loop {
+            match next().await {
+                Event::Output { parent, output } if parent == after => {
+                    assert!(crate::notebook::join_multiline(&output["text"]).contains("after"));
+                    break;
+                }
+                Event::Done { parent } if parent == after => panic!("no output from 'after'"),
+                _ => {}
             }
         }
     }

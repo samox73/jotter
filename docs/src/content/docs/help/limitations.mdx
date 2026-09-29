@@ -23,4 +23,5 @@ These are deliberate choices, to keep jOtter small, fast and reliable:
 - **Connecting to existing or remote kernels.** jOtter must own its kernel process so that interrupts and restarts always work. Run jOtter on the remote machine instead.
 - **Saving image outputs to files.** Use `plt.savefig` in the notebook.
 - **Jupytext and percent-format scripts.** Convert them with `jupytext --to ipynb`.
+- **Restoring the terminal after a hard kill.** If jOtter is killed with `SIGKILL` or `SIGABRT`, it can't switch off mouse capture and its other terminal modes, so you can't select text and images may stay on screen. Run `reset`, or start jOtter and quit normally. Closing the terminal and the usual `kill` (`SIGTERM`) are handled: jOtter autosaves first.
 - **Windows.** Use WSL.

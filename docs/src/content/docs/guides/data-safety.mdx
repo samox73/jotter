@@ -28,7 +28,7 @@ jOtter preserves everything it doesn't use itself: cell ids, metadata, attachmen
 
 <kbd>q</kbd> quits. With unsaved changes, jOtter asks: <kbd>s</kbd> saves and quits, <kbd>q</kbd> quits without saving, any other key stays. If you discard, the autosave stays behind, just in case.
 
-If the terminal is closed or jOtter is killed with `SIGTERM` or `SIGHUP`, it writes an autosave before exiting.
+If the terminal is closed or jOtter is killed with `SIGTERM`, `SIGHUP` or `SIGINT`, it writes an autosave before exiting. `SIGKILL` and `SIGABRT` end jOtter at once: changes since the last autosave are lost, and the terminal is left in jOtter's modes (see [Known limitations](/jotter/help/limitations/#not-planned)). The kernel exits by itself within a second either way.
 
 ## Autosave and recovery
 

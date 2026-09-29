@@ -1,5 +1,4 @@
 # Your first notebook: the getting-started tour, start to finish.
-config {complete_on_dot: false}
 rec start
 pause 800ms
 send "jotter first.ipynb" --delay 60ms

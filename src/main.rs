@@ -140,7 +140,12 @@ async fn main() -> Result<()> {
     .await;
     leave_extras(enhanced);
     let _ = crossterm::execute!(std::io::stdout(), SetCursorStyle::DefaultUserShape);
-    ratatui::restore();
+    // The terminal may be gone (closed under us). ratatui::restore() and
+    // Terminal's Drop report failures with eprintln!, which panics on a dead
+    // tty and then aborts from ratatui's panic hook; so try, and skip Drop.
+    let _ = ratatui::try_restore();
+    let _ = terminal.show_cursor();
+    std::mem::forget(terminal);
     result
 }
 

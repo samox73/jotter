@@ -1,6 +1,4 @@
 # Outputs: type a plot, run it, zoom into the figure with z.
-# No completion popups while typing: they'd distract from the plot.
-config {complete_on_dot: false}
 send "jotter plots.ipynb"
 key enter
 wait-for "○ idle"
