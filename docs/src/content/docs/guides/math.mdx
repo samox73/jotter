@@ -24,7 +24,9 @@ $$
 $$
 ```
 
-Inline math never splits across wrapped lines. It's drawn on the text's baseline at the text's size, within one terminal row; an expression that needs more room, like a fraction in big parentheses, is shrunk to fit. Write such fractions as `1/2` inline, or give the expression its own line with `$$`.
+Inline math never splits across wrapped lines. It's drawn on the text's baseline at the text's size, within one terminal row; an expression that needs more room, like a fraction in big parentheses, is shrunk to fit and centred in the row. Write such fractions as `1/2` inline, or give the expression its own line with `$$`.
+
+Display math is at most four rows tall; taller equations, such as a sum with limits, are scaled down to fit. Change the limit with [`max_math_rows`](/jotter/reference/configuration/#max_math_rows).
 
 ## Latex cells
 

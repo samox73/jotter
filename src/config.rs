@@ -13,6 +13,8 @@ pub struct Config {
     // an empty `///` line starts a new paragraph).
     /// Images taller than this many terminal rows are scaled down to fit, once, when the output is first shown. Larger values show plots bigger but push the next cell further down.
     pub max_image_rows: u16,
+    /// Display math taller than this many terminal rows is scaled down to fit: `$$…$$` in markdown, latex cells, and LaTeX outputs such as SymPy's. Inline `$…$` math always takes one row. See [math](/jotter/guides/math/).
+    pub max_math_rows: u16,
     /// Outputs taller than this many rows are shown in a scrollable viewport instead of in full. Scroll it with `[` and `]` or the mouse wheel; see [long outputs](/jotter/guides/outputs/#long-outputs).
     pub max_output_rows: usize,
     /// How often, in seconds, jOtter writes an autosave when there are unsaved changes. Autosaves go to `~/.local/state/jotter/autosave/`, never next to the notebook; see [data safety](/jotter/guides/data-safety/#autosave-and-recovery). Values below 1 count as 1.
@@ -37,6 +39,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             max_image_rows: 18,
+            max_math_rows: 4,
             max_output_rows: 15,
             autosave_secs: 30,
             theme: "base16-ocean.dark".into(),

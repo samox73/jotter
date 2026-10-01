@@ -12,7 +12,6 @@ use resvg::{tiny_skia, usvg};
 
 /// SVG font size the layout is produced at; one "text line" of math ≈ this many px.
 const SVG_FONT_PX: f64 = 40.0;
-const MAX_ROWS: f32 = 8.0;
 
 /// Math foreground follows the configured syntax theme: light text for dark
 /// terminals (everforest-ish), dark text for light themes.
@@ -35,10 +34,30 @@ fn fg() -> Color {
     }
 }
 
-/// Render display math scaled so one math text-line ≈ 1.4 terminal rows.
+/// Render display math scaled so one math text-line ≈ 1.4 terminal rows, at
+/// most `max_math_rows` tall, and cropped to its ink then centred in whole
+/// rows, so leftover space splits evenly above and below.
 /// Returns None on any parse/render failure — callers fall back to text.
 pub fn render_math(latex: &str, font_h: u16) -> Option<RgbaImage> {
-    render_scaled(latex, font_h, MathStyle::Display, 1.4, MAX_ROWS, 4.0)
+    let max_rows = crate::config::get().max_math_rows.max(1) as f32;
+    let img = render_scaled(latex, font_h, MathStyle::Display, 1.4, max_rows, 4.0)?;
+    Some(center_in_rows(crop_rows(img)?, font_h as u32))
+}
+
+/// Crop to the rows that have visible pixels (None if nothing is visible).
+fn crop_rows(img: RgbaImage) -> Option<RgbaImage> {
+    let inked = |y: u32| (0..img.width()).any(|x| img.get_pixel(x, y).0[3] > 0);
+    let y0 = (0..img.height()).find(|&y| inked(y))?;
+    let y1 = (0..img.height()).rev().find(|&y| inked(y))?;
+    Some(image::imageops::crop_imm(&img, 0, y0, img.width(), y1 - y0 + 1).to_image())
+}
+
+/// Pad to a whole number of `row`-px rows, the image vertically centred.
+fn center_in_rows(img: RgbaImage, row: u32) -> RgbaImage {
+    let h = img.height().div_ceil(row.max(1)) * row.max(1);
+    let mut out = RgbaImage::new(img.width(), h); // transparent
+    image::imageops::overlay(&mut out, &img, 0, ((h - img.height()) / 2) as i64);
+    out
 }
 
 /// Inline math size: one em, as a fraction of the terminal row height. At 0.9
@@ -48,6 +67,9 @@ const INLINE_EM_ROWS: f32 = 0.9;
 /// Where the text baseline sits in a terminal row, from the top: inline math
 /// shares it, so `$E_n$` and `$n = 0$` line up with each other and the prose.
 const INLINE_BASELINE_ROWS: f32 = 0.77;
+/// How much of the row an inline expression too tall for the baseline may
+/// fill when it is centred instead; the rest is a hairline of air.
+const INLINE_FIT: f32 = 0.96;
 
 /// Render inline math in TeX *text style* (like `$...$` in a paragraph:
 /// compact fractions, limits beside operators) into exactly one terminal row.
@@ -59,19 +81,29 @@ pub fn render_inline(latex: &str, font_h: u16) -> Option<RgbaImage> {
     let (tree, height_em, depth_em) = svg_tree(latex, MathStyle::Text, 0.0)?;
     let row = font_h as f32;
     let baseline = INLINE_BASELINE_ROWS * row;
+    let (height, depth) = (height_em as f32, depth_em as f32);
     // px per em: the common size, unless this expression needs less
-    let mut em = INLINE_EM_ROWS * row;
-    if height_em > 0.0 {
-        em = em.min(baseline / height_em as f32);
+    let full = INLINE_EM_ROWS * row;
+    let mut em = full;
+    if height > 0.0 {
+        em = em.min(baseline / height);
     }
-    if depth_em > 0.0 {
-        em = em.min((row - baseline) / depth_em as f32);
+    if depth > 0.0 {
+        em = em.min((row - baseline) / depth);
     }
+    let (em, top) = if em < full {
+        // too tall for the text baseline (a fraction, a root): leaving the
+        // baseline put would shrink it into the bottom of the row, so centre
+        // it in the row instead, as large as fits
+        let em = full.min(INLINE_FIT * row / (height + depth).max(1e-6));
+        (em, ((row - (height + depth) * em) / 2.0).round().max(0.0))
+    } else {
+        (em, (baseline - height * em).round().max(0.0))
+    };
     // the SVG is sized in pt, so measure the tree's own px per em
-    let tree_em = tree.size().height() / (height_em + depth_em).max(1e-6) as f32;
+    let tree_em = tree.size().height() / (height + depth).max(1e-6);
     let scale = em / tree_em;
     let w = (tree.size().width() * scale).ceil().max(1.0) as u32;
-    let top = (baseline - height_em as f32 * em).round().max(0.0);
     let mut pixmap = tiny_skia::Pixmap::new(w, font_h as u32)?; // transparent
     resvg::render(
         &tree,
@@ -308,5 +340,43 @@ mod tests {
     fn bad_latex_is_none_and_unicode_approx_works() {
         assert!(render_math(r"\frac{unclosed", 16).is_none() || true); // parse may be lenient
         assert_eq!(to_unicode_approx(r"$\hbar \omega^2$"), "ℏ ω²");
+    }
+
+    /// Empty pixel rows above and below the ink.
+    fn margins(img: &image::RgbaImage) -> (u32, u32) {
+        let inked = |y: u32| (0..img.width()).any(|x| img.get_pixel(x, y).0[3] > 0);
+        let top = (0..img.height()).find(|&y| inked(y)).unwrap();
+        let bottom = (0..img.height()).rev().find(|&y| inked(y)).unwrap();
+        (top, img.height() - 1 - bottom)
+    }
+
+    const ROW: u16 = 36;
+
+    #[test]
+    fn display_math_is_capped_and_centred() {
+        let tall = r"\sigma^2(m) = \frac{1}{n}\left[\gamma_0 + 2\sum_{t=1}^{n-1}\left(1-\frac{t}{n}\right)\gamma_t\right] \xrightarrow{n\gg\tau} \frac{2\tau_{\text{int}}\gamma_0}{n}";
+        for tex in [tall, "x = 1"] {
+            let img = super::render_math(tex, ROW).unwrap();
+            assert_eq!(img.height() % ROW as u32, 0, "{tex}: whole rows");
+            assert!(img.height() <= 4 * ROW as u32, "{tex}: {}px", img.height());
+            let (top, bottom) = margins(&img);
+            assert!(
+                top.abs_diff(bottom) <= 1,
+                "{tex}: {top}px above, {bottom}px below"
+            );
+        }
+    }
+
+    #[test]
+    fn inline_math_too_tall_for_the_baseline_is_centred() {
+        let img = super::render_inline(
+            r"\delta\left[c_0/(n-1)\right] \approx \frac{c_0}{n-1}\sqrt{\frac{2}{n-1}}",
+            ROW,
+        )
+        .unwrap();
+        assert_eq!(img.height(), ROW as u32);
+        let (top, bottom) = margins(&img);
+        assert!(top.abs_diff(bottom) <= 2, "{top}px above, {bottom}px below");
+        assert!(top + bottom <= 4, "fills the row: {top}+{bottom}px empty");
     }
 }
