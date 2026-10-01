@@ -380,6 +380,8 @@ pub struct NvimSession {
     rpc: Rpc,
     /// cell key -> nvim buffer handle (msgpack EXT value, echoed back verbatim)
     buffers: HashMap<String, Value>,
+    /// RPC budget: KEY while typing, SETUP while opening a cell.
+    budget: Duration,
 }
 
 impl NvimSession {
@@ -428,11 +430,12 @@ impl NvimSession {
         Ok(Self {
             rpc,
             buffers: HashMap::new(),
+            budget: KEY,
         })
     }
 
     fn req(&mut self, method: &str, params: Vec<Value>) -> Result<Value> {
-        self.rpc.request(method, params, KEY)
+        self.rpc.request(method, params, self.budget)
     }
 
     fn cmd(&mut self, command: &str) -> Result<()> {
@@ -489,6 +492,9 @@ impl NvimCell {
         source: &str,
         filetype: &str,
     ) -> Result<Self> {
+        // the first buffer of a filetype runs FileType autocmds and compiles
+        // treesitter queries (markdown + injections: ~300 ms) — not a hang
+        session.budget = SETUP;
         let src_lines: Vec<Value> = source.split('\n').map(Value::from).collect();
         let existing = match session.buffers.get(cell_key).cloned() {
             Some(b) => session
@@ -574,6 +580,7 @@ impl NvimCell {
         };
         // normalize whatever mode the previous cell edit left behind
         cell.feed("<Esc>")?;
+        cell.session.budget = KEY;
         Ok(cell)
     }
 
