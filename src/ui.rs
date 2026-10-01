@@ -481,6 +481,7 @@ impl Rendered {
             .find_syntax_by_token(lang)
             .unwrap_or_else(|| self.ps.find_syntax_plain_text());
         let mut hl = HighlightLines::new(syntax, &self.theme);
+        let theme_bg = self.theme.settings.background;
         LinesWithEndings::from(source)
             .map(|line| {
                 let spans = hl
@@ -488,11 +489,15 @@ impl Rendered {
                     .unwrap_or_default()
                     .into_iter()
                     .flat_map(|(st, txt)| {
-                        let fg = st.foreground;
-                        show_tabs(
-                            txt.trim_end_matches('\n'),
-                            Style::default().fg(Color::Rgb(fg.r, fg.g, fg.b)),
-                        )
+                        let (fg, bg) = (st.foreground, st.background);
+                        let mut style = Style::default().fg(Color::Rgb(fg.r, fg.g, fg.b));
+                        // the terminal's background stands in for the theme's,
+                        // but a token's own (invalid code: background-coloured
+                        // text on red) must be kept or its text disappears
+                        if Some(bg) != theme_bg {
+                            style = style.bg(Color::Rgb(bg.r, bg.g, bg.b));
+                        }
+                        show_tabs(txt.trim_end_matches('\n'), style)
                     })
                     .collect::<Vec<_>>();
                 Line::from(spans)
@@ -2306,6 +2311,31 @@ mod tests {
 
     // 1x1 transparent png
     const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=";
+
+    /// Invalid code (`f"{}"`, `np.(`) gets the theme's `invalid` style: text in
+    /// the background colour on a coloured background. It must stay visible.
+    #[test]
+    fn invalid_code_stays_visible_in_every_theme() {
+        let nb = Notebook {
+            cells: Vec::new(),
+            extra: serde_json::Map::new(),
+        };
+        let mut r = Rendered::build(&nb, None, Default::default());
+        for (name, theme) in ThemeSet::load_defaults().themes {
+            let bg = theme.settings.background.map(|c| Color::Rgb(c.r, c.g, c.b));
+            r.theme = theme;
+            for src in ["x = f\"{}\"\n", "return np.(x, ddof=1) / np.sqrt(N)\n"] {
+                for span in r.highlight(src, "python").iter().flat_map(|l| &l.spans) {
+                    let hidden = span.style.fg == bg && span.style.bg.is_none();
+                    assert!(
+                        !hidden || span.content.trim().is_empty(),
+                        "{name}: {:?} drawn in the background colour",
+                        span.content
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn visual_selection_ranges() {
