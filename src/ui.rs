@@ -2063,7 +2063,11 @@ fn draw_completion(
                 let d = fit(&item.detail, detail_room);
                 spans.push(Span::styled(
                     format!("  {d:<detail_room$}"),
-                    base.fg(Color::DarkGray),
+                    if i == c.sel {
+                        base
+                    } else {
+                        base.fg(Color::Gray)
+                    },
                 ));
             }
             spans.push(Span::styled(" ", base));
