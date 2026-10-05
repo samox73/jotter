@@ -1,0 +1,93 @@
+---
+title: "Compared with other tools"
+description: "How jOtter differs from euporie, jpterm (and nbterm), jupyter-console and Neovim plugins like molten-nvim, and when another tool is the better choice."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Several tools bring Jupyter to the terminal. They make different trade-offs, and for some workflows another tool is the better choice. This page says which one, and [measures](#speed) how fast jOtter and euporie respond.
+
+<Aside>
+The other tools' columns describe their current releases as of October 2026, from their own documentation and source code (linked below). If something here is out of date or wrong, please [open an issue](https://github.com/samox73/jotter/issues).
+</Aside>
+
+## At a glance
+
+| | jOtter | [euporie](https://github.com/joouha/euporie) | [jpterm](https://github.com/davidbrochart/jpterm) | [jupyter-console](https://github.com/jupyter/jupyter_console) | Neovim + [molten](https://github.com/benlubas/molten-nvim) + [jupytext](https://github.com/GCBallesteros/jupytext.nvim) |
+| --- | --- | --- | --- | --- | --- |
+| What it is | Notebook editor | Notebook editor, console and more | JupyterLab-like: notebooks, files, terminal | Console (REPL) | Plugins for your editor |
+| Opens and saves `.ipynb` | Yes | Yes | Yes | No | As text, through jupytext |
+| Runs on | One static binary, no Python of its own | Python 3.10+ | Python 3.10+ | Python | Neovim, Python |
+| Kernels | Any | Any | Any, also on a Jupyter server | Any | Any, also running servers |
+| Inline images | kitty, sixel, iTerm2, block characters | kitty, sixel, iTerm2, block characters | No; image files open in a viewer tab | External viewer | kitty, sixel, ueberzug++ |
+| LaTeX math | Yes | Yes | No | No | Through `pnglatex` |
+| HTML outputs, DataFrame tables | Text version | Yes, own HTML renderer | Text version | Text version | Opens a browser |
+| ipywidgets | No | Yes | Its own widget system (ypywidgets) | No | Not documented |
+| Editing | Vim-style editor, or an embedded Neovim with your config | Vim, Emacs or Micro keys | Jupyter-style modes, arrow keys | Vi or Emacs line editing | Neovim |
+| Completion | From the kernel, with signature help | From the kernel; optional language server | Not documented | From the kernel | Your Neovim setup (LSP) |
+| Several notebooks at once | No, one per terminal | Tabs and tiling | Not documented | n/a | Neovim buffers |
+| Saving an unchanged notebook | Byte-identical to Jupyter's own output | Not documented | Not documented | n/a | Depends on jupytext |
+| Maintained | Yes | Yes | Yes | Light maintenance, last release 2023 | Yes |
+
+## Speed
+
+jOtter started because the existing tools felt sluggish, so speed is the one thing it measures against them. The benchmark compares jOtter with euporie, the closest tool in features, on the same two notebooks: the 14-cell [showcase notebook](https://github.com/samox73/jotter/blob/main/showcase.ipynb), with a plot and math, and the same cells five times over (70 cells).
+
+| | jOtter | euporie | Terminal alone |
+| --- | --- | --- | --- |
+| Opening: notebook on screen (14 / 70 cells) | 0.21 s / 0.21 s | 3.92 s / 4.23 s | |
+| Opening: kernel ready (14 / 70 cells) | 1.6 s / 1.6 s | 4.6 s / 4.9 s | |
+| One keypress to the next or previous cell (median / 95th percentile) | 31 / 37 ms | 74 / 91 ms | 20 / 23 ms |
+| One typed character (median / 95th percentile) | 32 / 38 ms | 73 / 90 ms | 20 / 24 ms |
+| 78 cell moves sent at once (14 cells) | 189 ms | 204 ms | 17 ms |
+| 414 cell moves sent at once (70 cells) | 710 ms | 813 ms | 30 ms |
+| 200 characters typed at once | 288 ms | 402 ms | 18 ms |
+| Memory (14 / 70 cells) | 23 / 39 MiB | 136 / 149 MiB | |
+
+Each time runs from the keystroke (or the launch) to the moment the change is on screen. The "terminal alone" column is `cat` in the same terminal: kitty echoing the key itself, which is the floor for any tool.
+
+- **Opening** is 18 to 20 times faster, and doesn't grow with the notebook's length: jOtter renders only the cells near the screen and the rest as you reach them. euporie's opening time is mostly Python loading. Both use the same ipykernel; it's ready later in euporie because euporie starts it after its own startup.
+- **A single keypress**, the delay you feel when stepping through a notebook or typing, costs jOtter about 11 ms on top of the terminal and euporie about 54 ms: about a fifth of the work.
+- **Bursts** of keys sent all at once are closer: jOtter is 7 to 13 percent faster moving through cells, because the first pass through the notebook renders each cell as it comes into view, and 28 percent faster when typing.
+- **Memory** is a quarter or less.
+
+<details>
+<summary>How it was measured</summary>
+
+Both tools run in the same kitty 0.49.0, on a headless Wayland display at 960×600, driven by the same keystrokes through kitty's remote-control socket, which also reads the screen to time each change. Every run opens a fresh copy of the notebook in a new tab; each number is the median of 5 runs, and the single-key numbers pool 40 keypresses per run. jOtter's development version after 0.3.0 (with the rendering of only visible cells, which 0.3.0 doesn't have yet), euporie 2.10.4 (from nixpkgs), Python 3.14 with ipykernel 7.3 as the kernel, on an Intel Core Ultra 7 255U laptop, 2026-10-05. The raw results are in [`bench-results.json`](https://github.com/samox73/jotter/blob/main/docs/media/bench-results.json).
+
+The benchmark is [`docs/media/scenes/bench-editors.nu`](https://github.com/samox73/jotter/blob/main/docs/media/scenes/bench-editors.nu). With Nix installed, run it from a checkout with `make bench`; everything it needs, euporie included, is pinned in the repository's flake. Numbers vary between machines, so compare the columns with each other rather than with these.
+
+</details>
+
+## euporie
+
+[euporie](https://github.com/joouha/euporie) is the most complete terminal notebook application: interactive widgets, rendered HTML (including pandas DataFrames), tabs and tiling, an optional language-server client, a file browser and a table of contents. If you need widgets or rich HTML output in the terminal, use euporie.
+
+jOtter does less, differently:
+
+- **Faster.** 18 to 20 times faster to open a notebook, about a fifth of the work per keypress, and a quarter or less of the memory (see [Speed](#speed)).
+- **One binary.** jOtter is written in Rust and installs as a single static binary, a distribution package or a Nix package; it needs no Python environment of its own. Python is only needed in the kernel, as with every tool here.
+- **Notebooks stay byte-identical.** jOtter writes the same JSON layout as Jupyter's own `nbformat` library and keeps every field it doesn't use, so opening and saving a notebook changes nothing that JupyterLab or `git diff` would see. See [notebook compatibility](/jotter/reference/nbformat/).
+- **Real Neovim.** Besides its own vim-style editor, jOtter can embed Neovim with your configuration and plugins as the cell editor. See [embedded Neovim](/jotter/guides/neovim/).
+- **Data safety.** Atomic saves, autosave outside your repository, crash recovery, and a warning instead of a silent overwrite when the file changed on disk. See [data safety](/jotter/guides/data-safety/).
+
+## jpterm (and nbterm)
+
+[jpterm](https://github.com/davidbrochart/jpterm) aims to be JupyterLab in the terminal: besides notebooks it has a file browser, a terminal and a console, and it can work against a Jupyter server, including collaborative editing with JupyterLab users. If that is what you need, use jpterm. Its outputs are text: plots and math don't render inline, and its widgets use its own ypywidgets rather than ipywidgets.
+
+[nbterm](https://github.com/davidbrochart/nbterm), its predecessor, is no longer maintained; its author points to jpterm instead. nbterm also showed only text outputs. One thing it has that jOtter doesn't is a batch mode, `nbterm --run notebook.ipynb`, which runs a notebook without opening it.
+
+## jupyter-console
+
+[jupyter-console](https://github.com/jupyter/jupyter_console) is a REPL for any kernel, like an IPython prompt that can talk to Julia or R. It doesn't open or save notebooks, and images open in an external viewer. It does a different job from jOtter: use it for quick interactive sessions, and jOtter when the work should end up in a notebook.
+
+## Neovim plugins: molten-nvim and jupytext
+
+If you live in Neovim, [molten-nvim](https://github.com/benlubas/molten-nvim) sends code from a buffer to a kernel and shows the output in floating windows, with images through [image.nvim](https://github.com/3rd/image.nvim). [jupytext.nvim](https://github.com/GCBallesteros/jupytext.nvim) opens `.ipynb` files as plain-text scripts. Together you get your whole editor, your language server across the file, and kernels on remote Jupyter servers.
+
+The trade-off is that the notebook isn't the thing you edit: cells become comment markers in a script, outputs live in Neovim windows until you export them back with molten, and what is saved depends on the jupytext conversion. jOtter keeps the notebook as a notebook, with outputs under each cell and saved in the file, and still lets you edit each cell in [your own Neovim](/jotter/guides/neovim/).
+
+## JupyterLab and VS Code
+
+See the [FAQ](/jotter/help/faq/#how-is-jotter-different-from-jupyterlab). In short: they run in a browser or a desktop app and have widgets, HTML output and extensions; jOtter runs in a terminal, including over SSH, and opens the same files.

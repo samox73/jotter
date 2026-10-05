@@ -1,0 +1,96 @@
+{
+  "meta": {
+    "date": "2026-10-05",
+    "runs": 5,
+    "jotter": "jotter 0.3.0",
+    "euporie": "euporie-notebook 2.10.4",
+    "kitty": "kitty 0.49.0 created by Kovid Goyal",
+    "cpu": "Intel(R) Core(TM) Ultra 7 255U"
+  },
+  "results": [
+    {
+      "tool": "floor",
+      "notebook": "bench-14.ipynb",
+      "startup_first_ms": null,
+      "kernel_ready_ms": null,
+      "key_ms": 20.11,
+      "key_p95_ms": 23.42,
+      "char_ms": 19.75,
+      "char_p95_ms": 24.11,
+      "burst_nav_ms": 17.47,
+      "burst_keys": 78,
+      "burst_type_ms": 17.91,
+      "rss_mib": null
+    },
+    {
+      "tool": "floor",
+      "notebook": "bench-70.ipynb",
+      "startup_first_ms": null,
+      "kernel_ready_ms": null,
+      "key_ms": 20.0,
+      "key_p95_ms": 23.76,
+      "char_ms": 19.94,
+      "char_p95_ms": 24.49,
+      "burst_nav_ms": 29.62,
+      "burst_keys": 414,
+      "burst_type_ms": 28.61,
+      "rss_mib": null
+    },
+    {
+      "tool": "jotter",
+      "notebook": "bench-14.ipynb",
+      "startup_first_ms": 213.63,
+      "kernel_ready_ms": 1594.88,
+      "key_ms": 31.15,
+      "key_p95_ms": 37.47,
+      "char_ms": 31.91,
+      "char_p95_ms": 38.21,
+      "burst_nav_ms": 189.01,
+      "burst_keys": 78,
+      "burst_type_ms": 287.5,
+      "rss_mib": 23.2
+    },
+    {
+      "tool": "jotter",
+      "notebook": "bench-70.ipynb",
+      "startup_first_ms": 213.91,
+      "kernel_ready_ms": 1618.76,
+      "key_ms": 31.345,
+      "key_p95_ms": 35.62,
+      "char_ms": 32.195,
+      "char_p95_ms": 38.22,
+      "burst_nav_ms": 710.2,
+      "burst_keys": 414,
+      "burst_type_ms": 276.46,
+      "rss_mib": 38.6
+    },
+    {
+      "tool": "euporie",
+      "notebook": "bench-14.ipynb",
+      "startup_first_ms": 3919.62,
+      "kernel_ready_ms": 4593.52,
+      "key_ms": 73.765,
+      "key_p95_ms": 91.03,
+      "char_ms": 72.855,
+      "char_p95_ms": 89.93,
+      "burst_nav_ms": 204.02,
+      "burst_keys": 78,
+      "burst_type_ms": 401.69,
+      "rss_mib": 136.4
+    },
+    {
+      "tool": "euporie",
+      "notebook": "bench-70.ipynb",
+      "startup_first_ms": 4230.46,
+      "kernel_ready_ms": 4904.2,
+      "key_ms": 74.65,
+      "key_p95_ms": 94.94,
+      "char_ms": 66.305,
+      "char_p95_ms": 83.32,
+      "burst_nav_ms": 812.94,
+      "burst_keys": 414,
+      "burst_type_ms": 428.82,
+      "rss_mib": 148.6
+    }
+  ]
+}

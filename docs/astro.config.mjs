@@ -64,7 +64,13 @@ export default defineConfig({
         },
         {
           label: 'Help',
-          items: ['help/troubleshooting', 'help/faq', 'help/limitations', 'help/reporting-bugs'],
+          items: [
+            'help/troubleshooting',
+            'help/faq',
+            'help/comparison',
+            'help/limitations',
+            'help/reporting-bugs',
+          ],
         },
         {
           label: 'Project',
