@@ -297,10 +297,13 @@ impl Kernel {
         });
 
         // shell: sender task + reply pump. One request in flight at a time:
-        // ipykernel <= 7.3 can strand a request that arrives while it sends a
-        // reply (edge-triggered ZMQ_FD, ipython/ipykernel#1529), leaving the
-        // kernel idle with our request unread. The kernel runs shell requests
-        // one by one anyway, so waiting for each reply costs nothing.
+        // ipykernel 7.0-7.3 can strand a request that arrives while it sends a
+        // reply (edge-triggered ZMQ_FD, ipython/ipykernel#1529, fixed in 7.4),
+        // leaving the kernel idle with our request unread. Kept although 7.4
+        // is out: projects pin older ipykernels, and kernel_info reports
+        // IPython's version, not ipykernel's, so a fixed kernel can't be told
+        // apart. The kernel runs shell requests one by one anyway, so waiting
+        // for each reply costs nothing.
         let (mut shell_send, mut shell_recv) = shell.split();
         let (shell_tx, mut shell_rx) = mpsc::unbounded_channel::<JupyterMessage>();
         // (parent, the reply was a failed execute)
