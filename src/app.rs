@@ -139,6 +139,9 @@ pub struct App {
     /// Embedded nvim (editor = "nvim"), spawned lazily on first cell edit and
     /// parked here between edits so per-cell buffers keep their undo history.
     nvim: Option<NvimSession>,
+    /// The first session, started in the background when the notebook opens
+    /// so the first edit doesn't wait for the user's nvim config to load.
+    nvim_spawn: Option<std::thread::JoinHandle<Result<NvimSession>>>,
     /// Line -> cell mapping of the last draw (mouse support).
     pub hit: Vec<Hit>,
     /// Notebook body area of the last draw.
@@ -318,6 +321,10 @@ impl App {
             dirty: false,
             editor: None,
             nvim: None,
+            nvim_spawn: (crate::config::get().editor == "nvim").then(|| {
+                let user_config = crate::config::get().nvim_user_config;
+                std::thread::spawn(move || NvimSession::spawn(user_config))
+            }),
             hit: Vec::new(),
             body: Rect::default(),
             manual_scroll: false,
@@ -1215,8 +1222,14 @@ impl App {
         let user_config = crate::config::get().nvim_user_config;
         let existing = self.nvim.take();
         let had_existing = existing.is_some();
+        // first edit: take the background spawn (waits if it's still loading)
+        let started = self.nvim_spawn.take().map(|h| {
+            h.join()
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("nvim spawn thread panicked")))
+        });
         let opened = existing
             .map(Ok)
+            .or(started)
             .unwrap_or_else(|| NvimSession::spawn(user_config))
             .and_then(|s| NvimCell::open(s, &key, source, &filetype));
         let opened = match opened {

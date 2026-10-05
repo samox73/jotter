@@ -407,6 +407,11 @@ impl NvimSession {
              nnoremap ZZ <Cmd>JotterWq<CR>\n\
              nnoremap ZQ <Cmd>JotterQ!<CR>\n"
         );
+        // jotter never draws nvim's highlighting, yet a treesitter highlighter
+        // (started by 0.12's markdown ftplugin, or the user's FileType hooks)
+        // compiles its queries up front — ~300 ms for markdown's latex
+        // injection. Parsers stay usable on demand (textobjects, indent).
+        setup += "lua vim.treesitter.start = function() end\n";
         if !user_config {
             // no ftplugins without a config: Tab must still insert spaces
             // (a literal \t is an IndentationError waiting to happen)
