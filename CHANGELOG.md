@@ -2,6 +2,32 @@
 
 Every release of jOtter. The same notes are on each [GitHub release](https://github.com/samox73/jotter/releases).
 
+## 0.3.0 (2026-10-05)
+
+### Features
+
+- :w, :wq and ZZ in the embedded nvim save the notebook ([209e67c](https://github.com/samox73/jotter/commit/209e67ce4f0905c63eba3a7bc5812b1ffd868678))
+- Signature help while typing a call ([41e181b](https://github.com/samox73/jotter/commit/41e181b639bab8a1441b4a081962588910d0e15b))
+
+### Bug fixes
+
+- Close fullscreen plot before surfacing input field ([7eef99d](https://github.com/samox73/jotter/commit/7eef99da9dccb9f8c1de440d546223ddbca608b9))
+- Cells no longer hang after completion with ipykernel 7, and closing the terminal doesn't crash jOtter ([92f61df](https://github.com/samox73/jotter/commit/92f61df3ef29fb5116c196c96c6a0496b226ded8))
+- Display math is at most max_math_rows tall (default 4) and centred; tall inline math is centred ([c2dbf26](https://github.com/samox73/jotter/commit/c2dbf264d5c5c02d00101789622f21ab342dad0b))
+- Keep invalid code visible when highlighting ([c36f603](https://github.com/samox73/jotter/commit/c36f603059ebb2852c0dfe2e2bc2012c38d59c1b))
+- Readable signatures in the completion popup ([a99f742](https://github.com/samox73/jotter/commit/a99f7424a84b4ad3eb610da2a1a1cf5f63ad1b53))
+- Don't time out opening the first markdown cell in nvim ([d079078](https://github.com/samox73/jotter/commit/d079078f4f05615aa6f7c9f3861e26274a217fcc))
+
+### Performance
+
+- Start nvim in the background and skip its treesitter highlighting ([b952ea2](https://github.com/samox73/jotter/commit/b952ea246e3d61869158504e4f51b153d2e4d21c))
+
+### Documentation
+
+- Smoother typing in clips; Makefile for common commands ([c41f1d9](https://github.com/samox73/jotter/commit/c41f1d956fc61f56245341bb32acbf3d22f1223e))
+- What completion knows before cells have run ([7ff4227](https://github.com/samox73/jotter/commit/7ff4227e5f80a40512999623915af840f949c72e))
+- Transparent otter in the site header and the landing hero ([a416e9b](https://github.com/samox73/jotter/commit/a416e9b9036e798e43772c6bda3a0a14d865f0b7))
+
 ## 0.2.0 (2026-09-27)
 
 ### Features
