@@ -15,9 +15,11 @@ use tokio::sync::mpsc;
 
 mod cellops;
 mod completion;
+mod signature;
 
 use cellops::CellOp;
 pub use completion::Completion;
+pub use signature::SigHelp;
 
 /// What a rendered line belongs to — built each draw, used for mouse hits.
 pub struct Hit {
@@ -190,6 +192,8 @@ pub struct App {
     /// Kernel is waiting on `input()`.
     pub stdin_req: Option<StdinReq>,
     pub completion: Option<Completion>,
+    /// Signature help for the call the cursor is in.
+    pub signature: Option<SigHelp>,
     /// inspect_request msg_id awaiting its reply.
     pending_inspect: Option<String>,
     pub pager: Option<Pager>,
@@ -350,6 +354,7 @@ impl App {
             overwrite_armed: None,
             stdin_req: None,
             completion: None,
+            signature: None,
             pending_inspect: None,
             pager: None,
             undo_stack: Vec::new(),
@@ -757,6 +762,7 @@ impl App {
             self.on_key_edit(key, rendered);
             if self.editor.is_some() {
                 self.after_edit_key(key);
+                self.update_signature(key);
             }
             return Action::None;
         }
@@ -1023,6 +1029,7 @@ impl App {
     }
 
     fn commit_editor(&mut self, rendered: &mut Rendered) {
+        self.signature = None;
         let Some(editor) = self.editor.take() else {
             return;
         };

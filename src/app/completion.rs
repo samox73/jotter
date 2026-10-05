@@ -599,6 +599,9 @@ impl App {
     }
 
     pub(super) fn on_inspect_reply(&mut self, parent: String, text: Option<String>) {
+        if self.on_signature_reply(&parent, text.as_deref()) {
+            return;
+        }
         // a completion candidate's kind/signature
         if let Some(c) = &mut self.completion
             && let Some(item) = c.detail_reqs.remove(&parent)

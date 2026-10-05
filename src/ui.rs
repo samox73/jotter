@@ -1684,6 +1684,41 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         let typed_w = typed.trim_start_matches('.').width() as u16;
         draw_completion(frame, c, at, typed_w, body, &rendered.panel());
     }
+    // signature help: under the line, or above it while completion has the
+    // space below (nvim-style)
+    if let (Some(sig), Some(at), Some(editor)) = (&app.signature, cursor_at, &app.editor)
+        && !sig.text.is_empty()
+        && editor.mode() == ModeKind::Insert
+    {
+        let completion_below = app.completion.as_ref().is_some_and(|c| {
+            let shown = c.items.len().min(COMPLETION_ROWS);
+            shown > 0 && (body.y + body.height).saturating_sub(at.1 + 1) as usize >= shown
+        });
+        // the callee's column, when it is on the cursor's line
+        let (row, col) = editor.cursor();
+        let line_start = crate::app::char_offset(&editor_src, (row, 0));
+        let back = if sig.name_start() >= line_start {
+            let from = sig.name_start() - line_start;
+            let line = editor_src.split('\n').nth(row).unwrap_or("");
+            let typed: String = line
+                .chars()
+                .skip(from)
+                .take(col.saturating_sub(from))
+                .collect();
+            typed.width() as u16
+        } else {
+            0
+        };
+        draw_signature(
+            frame,
+            sig,
+            at,
+            back,
+            completion_below,
+            body,
+            &rendered.panel(),
+        );
+    }
     if app.show_help {
         draw_help(frame);
     }
@@ -1974,6 +2009,74 @@ fn fit(s: &str, w: usize) -> String {
     }
     out.push('…');
     out
+}
+
+/// Signature help popup: one row under the cursor line (above it when
+/// `above`, or when there is no room below), its text starting `back`
+/// columns left of the cursor (at the callee), the parameter being typed
+/// highlighted. Too wide for the body: it scrolls to keep that parameter in
+/// view.
+fn draw_signature(
+    frame: &mut Frame,
+    sig: &crate::app::SigHelp,
+    (cx, cy): (u16, u16),
+    back: u16,
+    above: bool,
+    body: Rect,
+    panel: &Panel,
+) {
+    let bottom = body.y + body.height;
+    let y = if (above || cy + 1 >= bottom) && cy > body.y {
+        cy - 1
+    } else if cy + 1 < bottom {
+        cy + 1
+    } else {
+        return;
+    };
+    let text = &sig.text;
+    let active = sig.active();
+    // horizontal window: whole text if it fits, else ending just after the
+    // active parameter (or at the start when none is active)
+    let room = body.width.saturating_sub(2) as usize;
+    let mut skip = 0; // bytes cut from the left
+    if text.width() > room {
+        let need_end = active.as_ref().map_or(0, |r| r.end);
+        while text[skip..need_end.max(skip)].width() + 1 > room {
+            skip += text[skip..].chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    let base = Style::new().bg(panel.bg);
+    let hot = Style::new().bg(panel.sel).add_modifier(Modifier::BOLD);
+    let mut spans = vec![Span::styled(if skip > 0 { "…" } else { " " }, base)];
+    let mut push = |range: std::ops::Range<usize>, style: Style| {
+        let (a, b) = (range.start.max(skip), range.end.max(skip));
+        if a < b {
+            spans.push(Span::styled(text[a..b].to_string(), style));
+        }
+    };
+    match active {
+        Some(r) => {
+            push(0..r.start, base);
+            push(r.clone(), hot);
+            push(r.end..text.len(), base);
+        }
+        None => push(0..text.len(), base),
+    }
+    spans.push(Span::styled(" ", base));
+    let line = Line::from(spans);
+    let width = (line.width() as u16).min(body.width);
+    let x = cx
+        .saturating_sub(back + 1)
+        .max(body.x)
+        .min(body.x + body.width - width);
+    let area = Rect {
+        x,
+        y,
+        width,
+        height: 1,
+    };
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 /// Completion popup (nvim-cmp style): a borderless panel under the cursor
@@ -2690,6 +2793,44 @@ mod tests {
                 .all(|r| col(r, "Variable").or(col(r, "Function")) == kind_col)
         );
         assert!(pop.iter().any(|r| r.contains("li13")), "selection visible");
+    }
+
+    #[test]
+    fn signature_popup_sits_under_the_line_with_the_argument_highlighted() {
+        use crate::app::SigHelp;
+        let nb_json = serde_json::json!({
+            "cells": [{"cell_type": "code", "id": "c", "metadata": {}, "execution_count": null,
+                       "outputs": [], "source": ["x = np.std(a, "]}],
+            "metadata": {}, "nbformat": 4, "nbformat_minor": 5
+        });
+        let path = std::env::temp_dir().join(format!("jotter-sigpop-{}.ipynb", std::process::id()));
+        std::fs::write(&path, nb_json.to_string()).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::open(path.clone(), None, tx).unwrap();
+        std::fs::remove_file(&path).ok();
+        let mut rendered = Rendered::build(&app.notebook, None, Default::default());
+        app.open_editor_for_test(); // insert mode, cursor at the end
+        app.signature =
+            Some(SigHelp::for_test("np.std(a, axis=None, ddof=0)", 1, None).placed(10, "np.std"));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 10)).unwrap();
+        terminal.draw(|f| draw(f, &mut app, &mut rendered)).unwrap();
+        let rows = buffer_rows(&terminal);
+        let code = rows
+            .iter()
+            .position(|r| r.contains("x = np.std(a,"))
+            .unwrap();
+        let pop = &rows[code + 1];
+        assert!(pop.contains("np.std(a, axis=None, ddof=0)"), "{rows:#?}");
+        // its text starts under the callee
+        let col = |r: &str, pat: &str| r.find(pat).map(|b| r[..b].chars().count());
+        assert_eq!(col(pop, "np.std"), col(&rows[code], "np.std"));
+        // `axis=None` is highlighted, the rest is not
+        let buf = terminal.backend().buffer();
+        let x = col(pop, "axis").unwrap() as u16;
+        let style = |x: u16| buf[(x, code as u16 + 1)].style();
+        assert!(style(x).add_modifier.contains(Modifier::BOLD));
+        assert!(!style(x - 3).add_modifier.contains(Modifier::BOLD)); // `a, `
     }
 
     #[test]
