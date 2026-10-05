@@ -15,7 +15,7 @@ export default defineConfig({
     starlight({
       title: 'jOtter',
       description: 'A fast Jupyter notebook TUI. Open, edit and run .ipynb notebooks in your terminal.',
-      logo: { src: './src/assets/otter.png', alt: 'jOtter' },
+      logo: { src: './src/assets/icon.png', alt: 'jOtter' },
       favicon: '/favicon.png',
       social: [{ icon: 'github', label: 'GitHub', href: repo }],
       editLink: { baseUrl: `${repo}/edit/main/docs/` },

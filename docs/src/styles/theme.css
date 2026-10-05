@@ -62,9 +62,10 @@ kbd {
   font-size: 0.8em;
   padding: 0.1em 0.35em;
 }
+/* the mascot is a transparent cut-out: a shadow that follows its outline,
+   not a box */
 .hero img {
-  border-radius: 1.5rem;
-  box-shadow: var(--sl-shadow-lg);
+  filter: drop-shadow(0 0.75rem 1.25rem rgb(0 0 0 / 0.25));
 }
 
 /* screenshot galleries: two per row on wide screens */
@@ -79,4 +80,10 @@ kbd {
 
 .changelog > h1:first-child {
   display: none;
+}
+
+/* landing hero: the full-resolution mascot, scaled to the hero's width */
+.hero-html img {
+  width: 100%;
+  height: auto;
 }

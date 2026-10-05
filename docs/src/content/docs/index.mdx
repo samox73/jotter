@@ -5,8 +5,9 @@ template: splash
 hero:
   tagline: A fast Jupyter notebook TUI. Open, edit and run real <code>.ipynb</code> notebooks in your terminal, with vim keys, inline plots and rendered LaTeX.
   image:
-    file: ../../assets/otter.png
-    alt: The jOtter mascot, an otter holding a notepad
+    # raw <img>, not `file:`: Starlight resizes hero files to 400 px, which is
+    # blurry on high-DPI screens; the full 721 px image is scaled by CSS
+    html: '<img src="/jotter/otter.webp" width="721" height="721" alt="The jOtter mascot, an otter holding a notepad">'
   actions:
     - text: Install
       link: /jotter/getting-started/installation/
