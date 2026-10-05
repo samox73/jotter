@@ -1,4 +1,4 @@
-.PHONY: install check test lint ci record docs-dev docs-build
+.PHONY: install check test lint ci record bench docs-dev docs-build
 
 # scenes to record (default: all), e.g. make record SCENES="hero plots"
 SCENES ?=
@@ -24,6 +24,11 @@ ci: lint test
 # docs clips and stills into docs/public/media
 record:
 	nix develop .#docs -c nu docs/media/record.nu $(if $(JOBS),-j $(JOBS)) $(SCENES)
+
+# speed comparison with euporie (docs/media/scenes/bench-editors.nu); run it
+# on an idle machine, BENCH_RUNS=n for more repetitions
+bench:
+	nix develop .#docs -c nu docs/media/record.nu -j 1 bench-editors
 
 docs-dev:
 	cd docs && nix develop ..#docs -c sh -c '[ -d node_modules ] || npm ci; npm run dev'

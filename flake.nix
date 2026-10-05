@@ -52,6 +52,9 @@
           LIBGL_DRIVERS_PATH = "${pkgs.mesa}/lib/dri";
           GBM_BACKENDS_PATH = "${pkgs.mesa}/lib/gbm";
           LIBGL_ALWAYS_SOFTWARE = "1";
+          # the speed comparison (scenes/bench-editors.nu); its own Python,
+          # off PATH so its `jupyter` can't shadow the kernel environment
+          EUPORIE = "${pkgs.python313Packages.euporie}/bin/euporie-notebook";
           FONTCONFIG_FILE = pkgs.makeFontsConf {
             fontDirectories = with pkgs; [ jetbrains-mono dejavu_fonts noto-fonts-color-emoji ];
           };

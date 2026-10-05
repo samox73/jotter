@@ -96,7 +96,10 @@ def record-scene [name: string, repo: string, out: string, python_prefix: string
         wait-until "sway" { $run | path join wayland-1 | path exists }
         let kitty = with-env $session {
             hide-env -i DISPLAY
-            bg $"kitty --config '($media)/kitty.conf' --listen-on ($sock) --directory '($work)' bash --rcfile '($media)/bashrc'" ($run | path join kitty.log)
+            # benchmarks measure the tools, not kitty's input batching and
+            # frame pacing: switch those off there (clips keep the defaults)
+            let fast = if ($name | str starts-with bench-) { "-o input_delay=0 -o repaint_delay=0 -o sync_to_monitor=no" } else { "" }
+            bg $"kitty --config '($media)/kitty.conf' ($fast) --listen-on ($sock) --directory '($work)' bash --rcfile '($media)/bashrc'" ($run | path join kitty.log)
         }
         let scene_result = try {
             wait-until "kitty" { (^kitty @ --to $sock ls | complete).exit_code == 0 }
@@ -139,7 +142,8 @@ def main [
     let out = $repo | path join docs public media
     mkdir $out
     let names = if ($scenes | is-empty) {
-        ls ($media | path join scenes) | get name | path parse | get stem | sort
+        # bench-* scenes measure instead of recording: only when named
+        ls ($media | path join scenes) | get name | path parse | get stem | where {|n| not ($n | str starts-with bench-) } | sort
     } else {
         $scenes
     }
