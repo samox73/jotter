@@ -29,6 +29,11 @@ trim = false
 [git]
 conventional_commits = true
 filter_unconventional = true
+# Release-note wording for commits already pushed (history can't change):
+# 92f61df also carried the crash-on-terminal-close fix.
+commit_preprocessors = [
+  { pattern = '^fix: stall until ipython/ipykernel#1529 arrives', replace = "fix: cells no longer hang after completion with ipykernel 7, and closing the terminal doesn't crash jOtter" },
+]
 commit_parsers = [
   { message = "^feat", group = "<!-- 0 -->Features" },
   { message = "^fix", group = "<!-- 1 -->Bug fixes" },
