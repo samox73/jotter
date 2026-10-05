@@ -128,6 +128,18 @@ fn to_rgba(pixmap: &tiny_skia::Pixmap) -> Option<RgbaImage> {
     RgbaImage::from_raw(pixmap.width(), pixmap.height(), data)
 }
 
+/// An SVG document's intrinsic size, as `render_svg` rasterises it. Parsed
+/// without fonts: text doesn't change the size, and loading them is slow.
+pub fn svg_px(svg: &str) -> Option<(u32, u32)> {
+    let size = usvg::Tree::from_str(svg, &usvg::Options::default())
+        .ok()?
+        .size();
+    Some((
+        size.width().ceil().max(1.0) as u32,
+        size.height().ceil().max(1.0) as u32,
+    ))
+}
+
 /// Render an SVG document at its intrinsic size (image/svg+xml outputs,
 /// markdown images). System fonts are loaded once for `<text>` elements
 /// (matplotlib defaults to paths, but not everyone does).

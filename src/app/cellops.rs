@@ -81,7 +81,7 @@ impl App {
                 CellOp::Insert(at, Box::new(cell))
             }
             CellOp::Insert(at, cell) => {
-                rendered.insert_cell(at, &cell);
+                rendered.insert_cell(at);
                 cells.insert(at, *cell);
                 self.remap_running(|i| Some(if i >= at { i + 1 } else { i }));
                 self.selected = at;

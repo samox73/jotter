@@ -13,7 +13,8 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
-use ratatui_image::picker::Picker;
+use ratatui_image::picker::{Capability, Picker, ProtocolType};
+use ratatui_image::protocol::kitty::Kitty;
 use ratatui_image::sliced::{SignedPosition, SlicedImage, SlicedProtocol};
 use serde_json::Value;
 use syntect::easy::HighlightLines;
@@ -44,7 +45,30 @@ pub struct InlineImage {
     rows: u16,
     /// Pixel size as transmitted (for the `D` report).
     px: (u32, u32),
-    proto: SlicedProtocol,
+    /// None in a layout pass: sized, never decoded or encoded.
+    proto: Option<SlicedProtocol>,
+    kitty: Option<KittyImage>,
+}
+
+/// A kitty image's terminal-side copy, deleted when the image is dropped
+/// (cell rebuilt or evicted); kitty would otherwise keep the pixels until
+/// quit, and every re-render transmits a fresh copy.
+struct KittyImage {
+    id: u32,
+    tmux: bool,
+}
+
+impl Drop for KittyImage {
+    fn drop(&mut self) {
+        use std::io::Write;
+        let seq = format!("\x1b_Ga=d,d=I,i={},q=2\x1b\\", self.id);
+        let seq = if self.tmux {
+            format!("\x1bPtmux;{}\x1b\\", seq.replace('\x1b', "\x1b\x1b"))
+        } else {
+            seq
+        };
+        let _ = std::io::stdout().write_all(seq.as_bytes());
+    }
 }
 
 /// Where a wrapped screen row comes from.
@@ -173,6 +197,10 @@ pub fn wrap_lines(lines: &[Line<'static>], width: u16) -> Wrapped {
     out
 }
 
+/// A cell's displayed form. Only cells near the viewport hold their content
+/// (`rendered`); the rest keep just their row counts, from a layout pass
+/// that skips highlighting and image decoding (math rows are estimated), or
+/// from content that was rendered and evicted again.
 pub struct CellBlock {
     /// Logical (unwrapped) lines; images and `src_map` index into these.
     lines: Vec<Line<'static>>,
@@ -191,13 +219,65 @@ pub struct CellBlock {
     pub elapsed: Option<std::time::Duration>,
     /// `lines` wrapped to the body width: what is actually displayed.
     wrap: Wrapped,
+    /// Content (lines, images, wrap) is present; else only `rows` is.
+    rendered: bool,
+    /// Displayed (source rows, output rows, output image rows).
+    rows: (usize, usize, usize),
+    /// Body width `rows` holds for (None = never laid out).
+    laid_for: Option<u16>,
+    /// Height in the last frame drawn, for scroll anchoring.
+    last_h: Option<usize>,
+    /// Frame it was last near the screen (render window), for eviction.
+    seen: u64,
 }
 
 impl CellBlock {
-    /// Re-wrap for `width` (no-op when already wrapped for it).
+    /// Not yet laid out: `Rendered::relayout` measures it.
+    fn empty() -> Self {
+        CellBlock {
+            lines: Vec::new(),
+            src_lines: 0,
+            images: Vec::new(),
+            src_map: Vec::new(),
+            out_scroll: usize::MAX,
+            collapsed: false,
+            full_images: false,
+            elapsed: None,
+            wrap: Wrapped::default(),
+            rendered: false,
+            rows: (0, 0, 0),
+            laid_for: None,
+            last_h: None,
+            seen: 0,
+        }
+    }
+
+    /// Drop the content, keeping its row counts.
+    /// Rough memory held by the rendered content: image pixels (RGBA) plus
+    /// a share per line. Only compared against the eviction budget.
+    fn cost(&self) -> usize {
+        let px: usize = self
+            .images
+            .iter()
+            .map(|i| i.px.0 as usize * i.px.1 as usize * 4)
+            .sum();
+        px + self.lines.len() * 256
+    }
+
+    fn evict(&mut self) {
+        self.lines = Vec::new();
+        self.images = Vec::new();
+        self.src_map = Vec::new();
+        self.wrap = Wrapped::default();
+        self.rendered = false;
+    }
+
     /// Re-wrap for body `width`: source rows lose the gutter's columns,
     /// outputs use the full width. No-op when already wrapped for it.
     fn rewrap(&mut self, width: u16) {
+        if !self.rendered {
+            return;
+        }
         if self.wrap.width != width || self.wrap.first_row.len() != self.lines.len() + 1 {
             let src_w = if width == 0 {
                 0
@@ -218,16 +298,25 @@ impl CellBlock {
             w.width = width;
             self.wrap = w;
         }
+        let src = self.wrap.first_row[self.src_lines];
+        let image_rows = self
+            .images
+            .iter()
+            .filter(|i| i.line >= self.src_lines)
+            .map(|i| i.rows as usize)
+            .sum(); // placeholder lines are empty: one row each, never wrapped
+        self.rows = (src, self.wrap.rows.len() - src, image_rows);
+        self.laid_for = Some(width);
     }
 
     /// Displayed source rows.
     pub fn src_rows(&self) -> usize {
-        self.wrap.first_row[self.src_lines]
+        self.rows.0
     }
 
     /// Displayed output rows (the viewport works in these).
     fn out_len(&self) -> usize {
-        self.wrap.rows.len() - self.src_rows()
+        self.rows.1
     }
 
     /// Top-left of an image in (block row, display column).
@@ -239,13 +328,7 @@ impl CellBlock {
     /// display units and extend the budget instead of being windowed away
     /// (a default matplotlib figure must never arrive cropped).
     fn out_cap(&self) -> usize {
-        let image_rows: usize = self
-            .images
-            .iter()
-            .filter(|i| i.line >= self.src_lines)
-            .map(|i| i.rows as usize)
-            .sum(); // placeholder lines are empty: one row each, never wrapped
-        max_output_rows() + image_rows
+        max_output_rows() + self.rows.2
     }
 
     fn max_out_scroll(&self) -> usize {
@@ -290,7 +373,7 @@ impl CellBlock {
             self.out_scroll.to_string()
         };
         format!(
-            "src {} rows · out {} rows (cap {}) · out_scroll {follow} → win {} · images {}{} · wrap {}{}{}",
+            "src {} rows · out {} rows (cap {}) · out_scroll {follow} → win {} · images {}{} · wrap {}{}{}{}",
             self.src_rows(),
             self.out_len(),
             self.out_cap(),
@@ -304,6 +387,11 @@ impl CellBlock {
                 ))
                 .collect::<String>(),
             self.wrap.width,
+            if self.rendered {
+                ""
+            } else {
+                " · not rendered"
+            },
             if self.collapsed { " · collapsed" } else { "" },
             if self.full_images {
                 " · native-size"
@@ -313,6 +401,14 @@ impl CellBlock {
         )
     }
 }
+
+/// Rendered content (see `CellBlock::cost`) kept before the least recently
+/// seen cells are evicted. A notebook within it renders each cell once.
+const RENDER_BUDGET: usize = 64 << 20;
+
+/// Full cell renders, counted for the tests.
+#[cfg(test)]
+static RENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 pub struct Rendered {
     ps: SyntaxSet,
@@ -326,6 +422,8 @@ pub struct Rendered {
     /// Body width blocks are wrapped to (0 until the first draw).
     width: u16,
     pub blocks: Vec<CellBlock>,
+    /// Frames drawn, for the blocks' `seen`.
+    frame: u64,
 }
 
 /// Kernel language recorded in the notebook: language_info.name (written by
@@ -365,18 +463,83 @@ impl Rendered {
             lang: notebook_language(nb),
             width: 0,
             blocks: Vec::new(),
+            frame: 0,
         };
-        r.blocks = nb.cells.iter().map(|c| r.render_cell(c, false)).collect();
+        r.blocks = nb.cells.iter().map(|_| CellBlock::empty()).collect();
         r
     }
 
-    /// Wrap every block to `width`; only blocks wrapped for another width do
+    /// Lay every block out for `width`: rendered blocks rewrap, the rest get
+    /// measured by a layout pass. Only blocks laid out for another width do
     /// work, so steady-state frames pay nothing.
-    pub fn relayout(&mut self, width: u16) {
+    pub fn relayout(&mut self, width: u16, nb: &Notebook) {
         self.width = width;
-        for b in &mut self.blocks {
-            b.rewrap(width);
+        for (i, cell) in nb.cells.iter().enumerate().take(self.blocks.len()) {
+            let b = &self.blocks[i];
+            if b.laid_for == Some(width) {
+                continue;
+            }
+            if b.rendered {
+                self.blocks[i].rewrap(width);
+            } else {
+                let rows = self.render_cell(cell, b.full_images, true).rows;
+                let b = &mut self.blocks[i];
+                (b.rows, b.laid_for) = (rows, Some(width));
+            }
         }
+    }
+
+    /// Give block `idx` its content, if it has none. Returns whether it rendered.
+    pub fn ensure(&mut self, idx: usize, cell: &Cell) -> bool {
+        if self.blocks[idx].rendered {
+            return false;
+        }
+        #[cfg(test)]
+        RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let new = self.render_cell(cell, self.blocks[idx].full_images, false);
+        self.replace(idx, new);
+        true
+    }
+
+    /// Keep rendered content until it exceeds `RENDER_BUDGET`, then drop the
+    /// blocks seen least recently (never those `keep` accepts: the render
+    /// window). Distance-based eviction re-rendered every cell on each sweep
+    /// through a long notebook (and re-sent every kitty image); with a budget,
+    /// a notebook that fits stays rendered once it has been seen.
+    pub fn evict(&mut self, keep: impl Fn(usize) -> bool) {
+        let mut total: usize = self
+            .blocks
+            .iter()
+            .filter(|b| b.rendered)
+            .map(CellBlock::cost)
+            .sum();
+        if total <= RENDER_BUDGET {
+            return;
+        }
+        let mut old: Vec<usize> = (0..self.blocks.len())
+            .filter(|&i| self.blocks[i].rendered && !keep(i))
+            .collect();
+        old.sort_by_key(|&i| self.blocks[i].seen);
+        for i in old {
+            if total <= RENDER_BUDGET {
+                break;
+            }
+            total -= self.blocks[i].cost();
+            self.blocks[i].evict();
+        }
+    }
+
+    /// Install `new` at `idx`, keeping the viewport position, image sizing,
+    /// timing and anchoring height of the block it replaces.
+    fn replace(&mut self, idx: usize, mut new: CellBlock) {
+        let old = &self.blocks[idx];
+        new.out_scroll = old.out_scroll;
+        new.collapsed = old.collapsed;
+        new.elapsed = old.elapsed;
+        new.full_images = old.full_images;
+        new.last_h = old.last_h;
+        new.seen = old.seen;
+        self.blocks[idx] = new;
     }
 
     /// Kernel language became known (new notebook): affects later renders.
@@ -406,19 +569,16 @@ impl Rendered {
             })
     }
 
+    /// The cell changed: re-render it if it has content (it is on or near
+    /// the screen), else only re-measure it.
     pub fn rebuild_cell(&mut self, idx: usize, cell: &Cell) {
-        // keep viewport position, image sizing, and timing across rebuilds
         let old = &self.blocks[idx];
-        let (out_scroll, collapsed, elapsed, full) =
-            (old.out_scroll, old.collapsed, old.elapsed, old.full_images);
-        self.blocks[idx] = self.render_cell(cell, full);
-        self.blocks[idx].out_scroll = out_scroll;
-        self.blocks[idx].collapsed = collapsed;
-        self.blocks[idx].elapsed = elapsed;
+        let new = self.render_cell(cell, old.full_images, !old.rendered);
+        self.replace(idx, new);
     }
 
-    pub fn insert_cell(&mut self, idx: usize, cell: &Cell) {
-        self.blocks.insert(idx, self.render_cell(cell, false));
+    pub fn insert_cell(&mut self, idx: usize) {
+        self.blocks.insert(idx, CellBlock::empty());
     }
 
     pub fn remove_cell(&mut self, idx: usize) {
@@ -431,11 +591,7 @@ impl Rendered {
 
     /// Re-render every cell (external reload, font-size change).
     pub fn rebuild_all(&mut self, nb: &Notebook) {
-        self.blocks = nb
-            .cells
-            .iter()
-            .map(|c| self.render_cell(c, false))
-            .collect();
+        self.blocks = nb.cells.iter().map(|_| CellBlock::empty()).collect();
     }
 
     /// Terminal resized. Reflow is free, but a *font-size* change (terminal
@@ -505,14 +661,27 @@ impl Rendered {
             .collect()
     }
 
-    fn render_cell(&self, cell: &Cell, full_images: bool) -> CellBlock {
+    /// Source lines as `highlight` splits them, uncoloured: a layout pass
+    /// wraps these to the same rows.
+    fn plain(source: &str) -> Vec<Line<'static>> {
+        LinesWithEndings::from(source)
+            .map(|l| Line::from(show_tabs(l.trim_end_matches('\n'), Style::default())))
+            .collect()
+    }
+
+    /// Render a cell. `est` is the layout pass: only the row counts of the
+    /// result are kept, so it skips highlighting and image decoding (sizes
+    /// come from image headers) and guesses rendered math's size.
+    fn render_cell(&self, cell: &Cell, full_images: bool, est: bool) -> CellBlock {
         let (mut lines, mut images, src_map) = if cell.cell_type == "markdown" {
-            self.render_markdown(&cell.source, cell.extra.get("attachments"))
+            self.render_markdown(&cell.source, cell.extra.get("attachments"), est)
         } else if is_latex_raw(cell) {
             // raw cell with metadata.format = text/latex: whole cell is math
             let (mut l, mut im) = (Vec::new(), Vec::new());
-            self.push_math(cell.source.trim().trim_matches('$'), &mut l, &mut im);
+            self.push_math(cell.source.trim().trim_matches('$'), &mut l, &mut im, est);
             (l, im, Vec::new())
+        } else if est {
+            (Self::plain(&cell.source), Vec::new(), Vec::new())
         } else {
             (
                 self.highlight(&cell.source, self.cell_lang(cell)),
@@ -523,12 +692,12 @@ impl Rendered {
         let src_lines = lines.len();
         for output in cell.outputs.iter().flatten() {
             if let Some(img) = self
-                .try_image(output, full_images)
-                .or_else(|| self.try_latex(output))
+                .try_image(output, full_images, est)
+                .or_else(|| self.try_latex(output, est))
             {
                 self.push_image(img, &mut lines, &mut images);
             } else if let Some(md) = output.get("data").and_then(|d| d.get("text/markdown")) {
-                let (md_lines, md_images, _) = self.render_markdown(&join_multiline(md), None);
+                let (md_lines, md_images, _) = self.render_markdown(&join_multiline(md), None, est);
                 let base = lines.len();
                 lines.extend(md_lines);
                 images.extend(md_images.into_iter().map(|im| InlineImage {
@@ -547,10 +716,13 @@ impl Rendered {
             out_scroll: usize::MAX,
             collapsed: false,
             full_images,
-            elapsed: None,
-            wrap: Wrapped::default(),
+            rendered: true,
+            ..CellBlock::empty()
         };
         block.rewrap(self.width);
+        if est {
+            block.evict();
+        }
         block
     }
 
@@ -578,25 +750,81 @@ impl Rendered {
     /// transmits once and clips per-row when partially scrolled off.
     fn image_entry(&self, img: image::DynamicImage, full: bool) -> Option<InlineImage> {
         let picker = self.picker.as_ref()?;
-        let fh = picker.font_size().height as u32;
-        let max_h = max_image_rows() as u32 * fh;
-        let img = if !full && img.height() > max_h {
-            let w = (img.width() as u64 * max_h as u64 / img.height() as u64).max(1) as u32;
-            img.resize_exact(w, max_h, image::imageops::FilterType::Lanczos3)
+        let (w, h) = self.shown_px((img.width(), img.height()), full)?;
+        let img = if (w, h) != (img.width(), img.height()) {
+            img.resize_exact(w, h, image::imageops::FilterType::Lanczos3)
         } else {
             img
         };
-        let px = (img.width(), img.height());
-        let proto = SlicedProtocol::new(picker, img, None).ok()?;
-        let size = proto.size();
+        let mut entry = self.sized_px((w, h))?;
+        // kitty: our own id, so the terminal's copy can be deleted on drop
+        entry.proto = Some(if picker.protocol_type() == ProtocolType::Kitty {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static NEXT: AtomicU32 = AtomicU32::new(1);
+            let id = NEXT.fetch_add(1, Ordering::Relaxed);
+            let size = ratatui::layout::Size::new(entry.cols, entry.rows);
+            let compress = picker
+                .capabilities()
+                .contains(&Capability::KittyCompression);
+            let tmux = picker.tmux_detected();
+            let kitty = Kitty::new(img, size, id, tmux, compress).ok()?;
+            entry.kitty = Some(KittyImage { id, tmux });
+            SlicedProtocol::Kitty(kitty)
+        } else {
+            SlicedProtocol::new(picker, img, None).ok()?
+        });
+        Some(entry)
+    }
+
+    /// Pixel size an image of `px` is shown at: taller than max_image_rows
+    /// is scaled down to it, unless `full`. None without graphics.
+    fn shown_px(&self, (w, h): (u32, u32), full: bool) -> Option<(u32, u32)> {
+        let fh = self.picker.as_ref()?.font_size().height as u32;
+        let max_h = max_image_rows() as u32 * fh;
+        Some(if !full && h > max_h {
+            ((w as u64 * max_h as u64 / h as u64).max(1) as u32, max_h)
+        } else {
+            (w, h)
+        })
+    }
+
+    /// An image of `px` shown pixels, sized in cells (as the protocols round:
+    /// up) but not encoded.
+    fn sized_px(&self, (w, h): (u32, u32)) -> Option<InlineImage> {
+        let font = self.picker.as_ref()?.font_size();
         Some(InlineImage {
             line: 0,
             col: 0,
-            px,
-            cols: size.width.max(1),
-            rows: size.height.max(1),
-            proto,
+            px: (w, h),
+            cols: (w.div_ceil(font.width.max(1) as u32) as u16).max(1),
+            rows: (h.div_ceil(font.height.max(1) as u32) as u16).max(1),
+            proto: None,
+            kitty: None,
         })
+    }
+
+    /// Layout pass: an image whose decoded size would be `px`.
+    fn sized(&self, px: (u32, u32), full: bool) -> Option<InlineImage> {
+        self.sized_px(self.shown_px(px, full)?)
+    }
+
+    /// Layout pass: rendered math, guessed at `cols` x `rows` cells.
+    fn sized_math(&self, cols: usize, rows: u16) -> Option<InlineImage> {
+        let font = self.picker.as_ref()?.font_size();
+        self.sized_px((
+            cols.max(1) as u32 * font.width as u32,
+            rows as u32 * font.height as u32,
+        ))
+    }
+
+    /// Pixel size of an output's raster/SVG image, from its header.
+    fn output_image_px(&self, output: &Value) -> Option<(u32, u32)> {
+        let data = output.get("data")?;
+        for mime in ["image/png", "image/jpeg", "image/gif"] {
+            let Some(v) = data.get(mime) else { continue };
+            return bytes_px(&b64_bytes(v)?);
+        }
+        crate::latex::svg_px(&join_multiline(data.get("image/svg+xml")?))
     }
 
     /// Decode an output's raster/SVG image at its native size.
@@ -604,9 +832,7 @@ impl Rendered {
         let data = output.get("data")?;
         for mime in ["image/png", "image/jpeg", "image/gif"] {
             let Some(v) = data.get(mime) else { continue };
-            let b64: String = join_multiline(v).split_whitespace().collect();
-            let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
-            return image::load_from_memory(&bytes)
+            return image::load_from_memory(&b64_bytes(v)?)
                 .ok()
                 .map(crate::recolor::apply);
         }
@@ -618,7 +844,11 @@ impl Rendered {
 
     /// If the output carries a raster/SVG image and graphics are available,
     /// build a protocol; `full` skips the height cap (native-size toggle).
-    fn try_image(&self, output: &Value, full: bool) -> Option<InlineImage> {
+    fn try_image(&self, output: &Value, full: bool, est: bool) -> Option<InlineImage> {
+        self.picker.as_ref()?;
+        if est {
+            return self.sized(self.output_image_px(output)?, full);
+        }
         self.image_entry(self.decode_output_image(output)?, full)
     }
 
@@ -657,20 +887,32 @@ impl Rendered {
     }
 
     /// text/latex output (e.g. sympy) -> rendered math image.
-    fn try_latex(&self, output: &Value) -> Option<InlineImage> {
+    fn try_latex(&self, output: &Value, est: bool) -> Option<InlineImage> {
         let picker = self.picker.as_ref()?;
         let tex = join_multiline(output.get("data")?.get("text/latex")?);
+        if est {
+            return self.sized_math(1, MATH_ROWS_GUESS.min(crate::config::get().max_math_rows));
+        }
         let tex = tex.trim().trim_matches('$').replace("\\displaystyle", "");
         let img = crate::latex::render_math(&tex, picker.font_size().height)?;
         self.image_entry(image::DynamicImage::ImageRgba8(img), false)
     }
 
-    fn push_math(&self, tex: &str, lines: &mut Vec<Line<'static>>, images: &mut Vec<InlineImage>) {
-        let rendered = self
-            .picker
-            .as_ref()
-            .and_then(|p| crate::latex::render_math(tex, p.font_size().height))
-            .and_then(|img| self.image_entry(image::DynamicImage::ImageRgba8(img), false));
+    fn push_math(
+        &self,
+        tex: &str,
+        lines: &mut Vec<Line<'static>>,
+        images: &mut Vec<InlineImage>,
+        est: bool,
+    ) {
+        let rendered = if est {
+            self.sized_math(1, MATH_ROWS_GUESS.min(crate::config::get().max_math_rows))
+        } else {
+            self.picker
+                .as_ref()
+                .and_then(|p| crate::latex::render_math(tex, p.font_size().height))
+                .and_then(|img| self.image_entry(image::DynamicImage::ImageRgba8(img), false))
+        };
         match rendered {
             Some(entry) => self.push_image(entry, lines, images),
             None => {
@@ -696,6 +938,7 @@ impl Rendered {
         &self,
         source: &str,
         attachments: Option<&Value>,
+        est: bool,
     ) -> (Vec<Line<'static>>, Vec<InlineImage>, Vec<usize>) {
         let mut lines = Vec::new();
         let mut images = Vec::new();
@@ -719,7 +962,11 @@ impl Rendered {
                     } else {
                         lang.as_str()
                     };
-                    let body = self.highlight(buf, lang);
+                    let body = if est {
+                        Self::plain(buf)
+                    } else {
+                        self.highlight(buf, lang)
+                    };
                     src_map.extend(i - body.len()..i); // fence body maps 1:1
                     lines.extend(body);
                     fence = None;
@@ -734,7 +981,7 @@ impl Rendered {
                     buf.push_str(head);
                     let tex = std::mem::take(buf);
                     math = None;
-                    self.push_math(&tex, &mut lines, &mut images);
+                    self.push_math(&tex, &mut lines, &mut images, est);
                     pad(&mut src_map, lines.len(), i);
                 } else {
                     buf.push_str(raw);
@@ -752,7 +999,7 @@ impl Rendered {
                 table.clear();
             }
             if let Some((alt, src)) = parse_md_image(t) {
-                match self.md_image(src, attachments) {
+                match self.md_image(src, attachments, est) {
                     Some(entry) => self.push_image(entry, &mut lines, &mut images),
                     None => lines.push(Line::styled(
                         format!("[image: {}]", if alt.is_empty() { src } else { alt }),
@@ -769,7 +1016,7 @@ impl Rendered {
             if let Some(rest) = t.strip_prefix("$$") {
                 match rest.strip_suffix("$$") {
                     Some(inner) if !rest.is_empty() => {
-                        self.push_math(inner, &mut lines, &mut images)
+                        self.push_math(inner, &mut lines, &mut images, est)
                     }
                     _ => math = Some(format!("{rest}\n")),
                 }
@@ -793,7 +1040,7 @@ impl Rendered {
                 continue;
             }
             let line_idx = lines.len();
-            let line = self.md_line(raw, line_idx, &mut images);
+            let line = self.md_line(raw, line_idx, &mut images, est);
             lines.push(line);
             src_map.push(i);
         }
@@ -811,13 +1058,16 @@ impl Rendered {
 
     /// Load a markdown image: `attachment:name` from the cell's attachments,
     /// otherwise a path relative to the notebook directory. No network.
-    fn md_image(&self, src: &str, attachments: Option<&Value>) -> Option<InlineImage> {
+    fn md_image(&self, src: &str, attachments: Option<&Value>, est: bool) -> Option<InlineImage> {
+        self.picker.as_ref()?;
         if let Some(name) = src.strip_prefix("attachment:") {
             for v in attachments?.get(name)?.as_object()?.values() {
-                let b64: String = join_multiline(v).split_whitespace().collect();
-                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64)
-                    && let Ok(img) = image::load_from_memory(&bytes)
-                {
+                let Some(bytes) = b64_bytes(v) else { continue };
+                if est {
+                    if let Some(px) = bytes_px(&bytes) {
+                        return self.sized(px, false);
+                    }
+                } else if let Ok(img) = image::load_from_memory(&bytes) {
                     return self.image_entry(img, false);
                 }
             }
@@ -832,10 +1082,16 @@ impl Rendered {
             .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
         {
             let svg = std::fs::read_to_string(path).ok()?;
+            if est {
+                return self.sized(crate::latex::svg_px(&svg)?, false);
+            }
             return self.image_entry(
                 image::DynamicImage::ImageRgba8(crate::latex::render_svg(&svg)?),
                 false,
             );
+        }
+        if est {
+            return self.sized(image::image_dimensions(path).ok()?, false);
         }
         self.image_entry(image::open(path).ok()?, false)
     }
@@ -843,7 +1099,13 @@ impl Rendered {
     /// Inline markdown spans: bullets, `code`, $math$, [links](url),
     /// *emphasis*/**bold**, ![inline images] as alt text. Inline math renders
     /// in TeX text style as a one-row image in reserved columns.
-    fn md_line(&self, raw: &str, line_idx: usize, images: &mut Vec<InlineImage>) -> Line<'static> {
+    fn md_line(
+        &self,
+        raw: &str,
+        line_idx: usize,
+        images: &mut Vec<InlineImage>,
+        est: bool,
+    ) -> Line<'static> {
         let code_style = Style::new().fg(Color::Yellow);
         let math_style = Style::new()
             .fg(Color::Magenta)
@@ -909,13 +1171,19 @@ impl Rendered {
                     let inner = inner.trim().to_string();
                     flush(&mut text, &mut spans, &mut col);
                     if is_math {
-                        let entry = self
-                            .picker
-                            .as_ref()
-                            .and_then(|p| crate::latex::render_inline(&inner, p.font_size().height))
-                            .and_then(|img| {
-                                self.image_entry(image::DynamicImage::ImageRgba8(img), false)
-                            });
+                        let entry = if est {
+                            let guess = crate::latex::to_unicode_approx(&inner).width();
+                            self.sized_math(guess, 1)
+                        } else {
+                            self.picker
+                                .as_ref()
+                                .and_then(|p| {
+                                    crate::latex::render_inline(&inner, p.font_size().height)
+                                })
+                                .and_then(|img| {
+                                    self.image_entry(image::DynamicImage::ImageRgba8(img), false)
+                                })
+                        };
                         if let Some(entry) = entry {
                             // reserve the columns in the text flow; NBSP so
                             // soft wrapping never splits the equation
@@ -1014,6 +1282,25 @@ impl Rendered {
         flush(&mut text, &mut spans, &mut col);
         Line::from(spans)
     }
+}
+
+/// Display math rows a layout pass assumes before rendering (capped by
+/// max_math_rows); the real height corrects it once the cell is on screen.
+const MATH_ROWS_GUESS: u16 = 2;
+
+/// An output's base64 payload, decoded.
+fn b64_bytes(v: &Value) -> Option<Vec<u8>> {
+    let b64: String = join_multiline(v).split_whitespace().collect();
+    base64::engine::general_purpose::STANDARD.decode(b64).ok()
+}
+
+/// Pixel size of an encoded raster image, read from its header.
+fn bytes_px(bytes: &[u8]) -> Option<(u32, u32)> {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
 }
 
 /// Source text as spans, with each tab shown as a dim `→` (one column, so
@@ -1330,7 +1617,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
     let height = body.height as usize;
 
-    rendered.relayout(body.width);
+    rendered.relayout(body.width, &app.notebook);
 
     // The editing cell renders live from the editor buffer: highlighted and
     // wrapped once per frame (one cell; cached blocks rewrap only on resize).
@@ -1382,7 +1669,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
             self.src + self.win_rows + self.footer as usize
         }
     }
-    let view = |i: usize| -> CellView {
+    let view = |rendered: &Rendered, i: usize| -> CellView {
         let block = &rendered.blocks[i];
         let src = if editing_cell == Some(i) {
             editor_wrap.rows.len()
@@ -1398,37 +1685,81 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
             footer,
         }
     };
-    let mut starts: Vec<usize> = Vec::with_capacity(app.notebook.cells.len());
-    let mut total = 0usize;
-    for i in 0..app.notebook.cells.len() {
-        starts.push(total);
-        total += 1 + view(i).body() + 1; // prompt + body + separator
+    // Only cells on or near the screen are rendered; the rest are laid out
+    // from row counts (estimated for math). Rendering a cell can change its
+    // height, which moves the view, which can bring more cells near: repeat
+    // until the neighbourhood is rendered. Each round renders at least one
+    // cell, so this ends.
+    let n = app.notebook.cells.len();
+    let (mut starts, mut heights) = (Vec::with_capacity(n), Vec::with_capacity(n));
+    let mut total;
+    loop {
+        heights.clear();
+        heights.extend((0..n).map(|i| 1 + view(rendered, i).body() + 1)); // prompt + body + separator
+        // Scroll anchoring: a cell wholly above the view that changed height
+        // since it was last laid out (estimate corrected, output grew) moves
+        // the view with it, so the content on screen stays put.
+        let (mut old_end, mut shift) = (0usize, 0isize);
+        for (b, &h) in rendered.blocks.iter_mut().zip(&heights) {
+            if let Some(old) = b.last_h.replace(h) {
+                old_end += old;
+                if old_end <= app.scroll {
+                    shift += h as isize - old as isize;
+                }
+            }
+        }
+        app.scroll = app.scroll.saturating_add_signed(shift);
+        starts.clear();
+        total = 0;
+        for &h in &heights {
+            starts.push(total);
+            total += h;
+        }
+
+        // Keep selection visible (cursor line when editing, whole cell
+        // otherwise) — unless the user wheel-scrolled away; then only clamp
+        // to the content.
+        if app.manual_scroll || starts.is_empty() {
+            app.scroll = app.scroll.min(total.saturating_sub(1));
+        } else if let Some((row, _)) = editor_cursor {
+            let cur = starts[app.selected] + 1 + row;
+            if cur >= app.scroll + height {
+                app.scroll = cur + 1 - height;
+            }
+            if cur < app.scroll {
+                app.scroll = cur;
+            }
+        } else {
+            let sel_start = starts[app.selected];
+            let sel_end = sel_start + heights[app.selected] - 1;
+            if sel_end > app.scroll + height {
+                app.scroll = sel_end - height;
+            }
+            if sel_start < app.scroll {
+                app.scroll = sel_start;
+            }
+        }
+
+        // render the screen plus one screen of margin on each side
+        let (lo, hi) = (app.scroll.saturating_sub(height), app.scroll + 2 * height);
+        let mut any = false;
+        for i in 0..n {
+            if starts[i] < hi && starts[i] + heights[i] > lo {
+                any |= rendered.ensure(i, &app.notebook.cells[i]);
+                rendered.blocks[i].seen = rendered.frame;
+            }
+        }
+        if !any {
+            break;
+        }
     }
+    // over the memory budget: drop the least recently seen content (keep the
+    // row counts), never the render window
+    let (lo, hi) = (app.scroll.saturating_sub(height), app.scroll + 2 * height);
+    rendered.evict(|i| starts[i] < hi && starts[i] + heights[i] > lo);
+    rendered.frame += 1;
     app.content_lines = total;
     app.body = body;
-
-    // Keep selection visible (cursor line when editing, whole cell otherwise) —
-    // unless the user wheel-scrolled away; then only clamp to the content.
-    if app.manual_scroll || starts.is_empty() {
-        app.scroll = app.scroll.min(total.saturating_sub(1));
-    } else if let Some((row, _)) = editor_cursor {
-        let cur = starts[app.selected] + 1 + row;
-        if cur >= app.scroll + height {
-            app.scroll = cur + 1 - height;
-        }
-        if cur < app.scroll {
-            app.scroll = cur;
-        }
-    } else {
-        let sel_start = starts[app.selected];
-        let sel_end = sel_start + 1 + view(app.selected).body();
-        if sel_end > app.scroll + height {
-            app.scroll = sel_end - height;
-        }
-        if sel_start < app.scroll {
-            app.scroll = sel_start;
-        }
-    }
 
     // Materialize only the visible window (notebooks can be huge; frames are not).
     let end = (app.scroll + height).min(total);
@@ -1445,7 +1776,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         let cell = &app.notebook.cells[ci];
         let block = &rendered.blocks[ci];
         let editing = editing_cell == Some(ci);
-        let v = view(ci);
+        let v = view(rendered, ci);
         let local = a - starts[ci];
         let (line, kind) = if local == 0 {
             let run = app
@@ -1522,7 +1853,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         .filter(|_| app.zoom.is_none())
     {
         let editing = editing_cell == Some(i);
-        let v = view(i);
+        let v = view(rendered, i);
         for img in &block.images {
             let in_src = img.line < block.src_lines;
             // editing replaces the source region: markdown-math images hide
@@ -1573,7 +1904,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
                     },
                 )
             };
-            frame.render_widget(SlicedImage::new(&img.proto, pos), area);
+            if let Some(proto) = &img.proto {
+                frame.render_widget(SlicedImage::new(proto, pos), area);
+            }
         }
     }
 
@@ -2513,7 +2846,8 @@ mod tests {
             extra: serde_json::Map::new(),
         };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
-        let r = Rendered::build(&nb, Some(picker), Default::default());
+        let mut r = Rendered::build(&nb, Some(picker), Default::default());
+        r.ensure(0, &nb.cells[0]);
         let block = &r.blocks[0];
         assert_eq!(block.src_lines, 1);
         assert_eq!(block.images.len(), 1);
@@ -2521,7 +2855,8 @@ mod tests {
         assert_eq!(block.lines.len(), 1 + block.images[0].rows as usize);
 
         // without a picker: placeholder text instead
-        let r = Rendered::build(&nb, None, Default::default());
+        let mut r = Rendered::build(&nb, None, Default::default());
+        r.ensure(0, &nb.cells[0]);
         assert!(r.blocks[0].images.is_empty());
         assert_eq!(r.blocks[0].lines.len(), 2);
     }
@@ -2567,7 +2902,8 @@ mod tests {
             extra: serde_json::Map::new(),
         };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
-        let r = Rendered::build(&nb, Some(picker), Default::default());
+        let mut r = Rendered::build(&nb, Some(picker), Default::default());
+        r.ensure(0, &nb.cells[0]);
         let block = &r.blocks[0];
         assert_eq!(block.images.len(), 2);
         // ALL inline math is exactly one row; too small => author uses $$
@@ -2592,6 +2928,7 @@ mod tests {
             extra: serde_json::Map::new(),
         };
         let mut r = Rendered::build(&nb, None, Default::default());
+        r.ensure(0, &nb.cells[0]);
         let b = &mut r.blocks[0];
         let len = b.out_len();
         assert!(len > max_output_rows());
@@ -2630,8 +2967,8 @@ mod tests {
             out_scroll: usize::MAX,
             collapsed: false,
             full_images: false,
-            elapsed: None,
-            wrap: Wrapped::default(),
+            rendered: true,
+            ..CellBlock::empty()
         };
         block.rewrap(0);
         assert_eq!(block.window(), (0, rows + 1, false), "plot arrives whole");
@@ -2653,7 +2990,7 @@ mod tests {
                 extra: serde_json::Map::new(),
             };
             let r = Rendered::build(&nb, None, Default::default());
-            r.render_markdown(src, None)
+            r.render_markdown(src, None, false)
         };
         // heading, blank, text, 3 table rows, trailing line -> identity here
         assert_eq!(map, vec![0, 1, 2, 3, 4, 5, 6]);
@@ -2670,7 +3007,8 @@ mod tests {
             cells: vec![cell],
             extra: serde_json::Map::new(),
         };
-        let r = Rendered::build(&nb, None, Default::default());
+        let mut r = Rendered::build(&nb, None, Default::default());
+        r.ensure(0, &nb.cells[0]);
         let text: Vec<String> = r.blocks[0]
             .lines
             .iter()
@@ -2963,6 +3301,114 @@ mod tests {
         assert_eq!(app.hit[0].cell, 0);
     }
 
+    /// The layout pass measures what a render would, without highlighting
+    /// or decoding: exactly, for everything but math.
+    #[test]
+    fn layout_pass_rows_match_the_render() {
+        let png = {
+            let mut buf = Vec::new();
+            image::DynamicImage::new_rgba8(300, 500)
+                .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+                .unwrap();
+            base64::engine::general_purpose::STANDARD.encode(buf)
+        };
+        let long = "word ".repeat(20);
+        let cells: Vec<Cell> = [
+            serde_json::json!({"cell_type": "code", "metadata": {},
+                "source": format!("def f(x):\n\treturn x  # {long}\n"),
+                "outputs": [
+                    {"output_type": "stream", "name": "stdout", "text": format!("a\tb\n{long}\n")},
+                    {"output_type": "display_data", "metadata": {}, "data": {"image/png": png}},
+                    {"output_type": "execute_result", "metadata": {}, "data": {"text/plain": "3"}}]}),
+            serde_json::json!({"cell_type": "markdown", "metadata": {},
+                "source": format!("# Title\n- {long}\n```python\nx = 1  # {long}\n```\n| a | b |\n|---|---|\n| 1 | 2 |\n![p](attachment:p.png)"),
+                "attachments": {"p.png": {"image/png": png}}}),
+        ]
+        .into_iter()
+        .map(|v| serde_json::from_value(v).unwrap())
+        .collect();
+        let nb = Notebook {
+            cells,
+            extra: serde_json::Map::new(),
+        };
+        let picker = Picker::from_fontsize(FontSize::new(8, 16));
+        for p in [Some(picker), None] {
+            let mut r = Rendered::build(&nb, p, Default::default());
+            for width in [0, 30, 80] {
+                r.width = width;
+                for (i, cell) in nb.cells.iter().enumerate() {
+                    let est = r.render_cell(cell, false, true);
+                    let real = r.render_cell(cell, false, false);
+                    assert!(!est.rendered && real.rendered);
+                    assert_eq!(est.rows, real.rows, "cell {i} at width {width}");
+                }
+            }
+        }
+    }
+
+    /// A long notebook renders only what is near the screen, renders the end
+    /// when it gets there, and keeps the view still when a cell above it
+    /// turns from estimated to exact height.
+    #[test]
+    fn only_cells_near_the_screen_render() {
+        let math = "$$\\sum_{n=0}^{\\infty} \\frac{x^n}{n!} = \\int_0^1 \\frac{\\mathrm{d}t}{\\sqrt{1-t^2}}$$";
+        let cells: Vec<serde_json::Value> = (0..300)
+            .map(|i| {
+                if i % 2 == 0 {
+                    serde_json::json!({"cell_type": "markdown", "metadata": {},
+                                       "source": format!("cell {i}\n{math}")})
+                } else {
+                    serde_json::json!({"cell_type": "code", "metadata": {}, "execution_count": i,
+                        "source": format!("print({i})"),
+                        "outputs": [{"output_type": "stream", "name": "stdout", "text": format!("out-{i}\n")}]})
+                }
+            })
+            .collect();
+        let nb_json =
+            serde_json::json!({"cells": cells, "metadata": {}, "nbformat": 4, "nbformat_minor": 5});
+        let path = std::env::temp_dir().join(format!("jotter-lazy-{}.ipynb", std::process::id()));
+        std::fs::write(&path, nb_json.to_string()).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::open(path.clone(), None, tx).unwrap();
+        std::fs::remove_file(&path).ok();
+        let picker = Picker::from_fontsize(FontSize::new(8, 16));
+        let mut rendered = Rendered::build(&app.notebook, Some(picker), Default::default());
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 20)).unwrap();
+        let mut draw_rows = |app: &mut crate::app::App, rendered: &mut Rendered| {
+            terminal.draw(|f| draw(f, app, rendered)).unwrap();
+            buffer_rows(&terminal)
+        };
+        let count = |r: &Rendered| r.blocks.iter().filter(|b| b.rendered).count();
+
+        draw_rows(&mut app, &mut rendered);
+        assert!(rendered.blocks[0].rendered);
+        // the screen plus a screen of margin below: a handful of cells
+        assert!(count(&rendered) < 20, "{} rendered", count(&rendered));
+
+        // G: the end renders, the cells in between never do (the start stays
+        // cached: it fits the memory budget; eviction has its own test)
+        app.selected = 299;
+        let rows = draw_rows(&mut app, &mut rendered);
+        assert!(rows.iter().any(|r| r.contains("out-299")), "{rows:#?}");
+        assert!(rendered.blocks[299].rendered && !rendered.blocks[150].rendered);
+        assert!(count(&rendered) < 30, "{} rendered", count(&rendered));
+
+        // a math cell above the view gets its exact height: the screen stays put
+        app.manual_scroll = true;
+        let before = draw_rows(&mut app, &mut rendered);
+        let above = (0..299)
+            .rev()
+            .find(|&i| i % 2 == 0 && !rendered.blocks[i].rendered)
+            .unwrap();
+        let est = rendered.blocks[above].rows;
+        rendered.ensure(above, &app.notebook.cells[above]);
+        assert_ne!(rendered.blocks[above].rows, est, "the estimate was off");
+        let scroll = app.scroll;
+        assert_eq!(draw_rows(&mut app, &mut rendered), before);
+        assert_ne!(app.scroll, scroll, "the view moved with the content");
+    }
+
     #[test]
     fn markdown_renders_rich() {
         let cell: Cell = serde_json::from_value(serde_json::json!({
@@ -2975,7 +3421,8 @@ mod tests {
             cells: vec![cell],
             extra: serde_json::Map::new(),
         };
-        let r = Rendered::build(&nb, None, Default::default()); // no graphics -> math becomes unicode approx
+        let mut r = Rendered::build(&nb, None, Default::default()); // no graphics -> math becomes unicode approx
+        r.ensure(0, &nb.cells[0]);
         let text: Vec<String> = r.blocks[0]
             .lines
             .iter()
@@ -2985,5 +3432,78 @@ mod tests {
         assert_eq!(text[1], "• item");
         assert!(text[2].contains("f(x)") && text[2].contains('τ'));
         assert!(text[3].contains("E = ℏ ω²"));
+    }
+
+    /// Sweeping through a long notebook renders each cell once: content
+    /// stays cached within the budget instead of being evicted and rendered
+    /// again on the way back (which also re-sent every kitty image).
+    #[test]
+    fn sweeping_a_notebook_renders_each_cell_once() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/showcase.ipynb"))
+            .unwrap();
+        let mut nb: serde_json::Value = serde_json::from_str(&src).unwrap();
+        let cells = nb["cells"].as_array().unwrap().clone();
+        nb["cells"] = serde_json::Value::Array((0..5).flat_map(|_| cells.clone()).collect());
+        for (i, c) in nb["cells"].as_array_mut().unwrap().iter_mut().enumerate() {
+            c["id"] = format!("c{i}").into();
+        }
+        let path = std::env::temp_dir().join(format!("jotter-sweep-{}.ipynb", std::process::id()));
+        std::fs::write(&path, nb.to_string()).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::open(path.clone(), None, tx).unwrap();
+        std::fs::remove_file(&path).ok();
+        let picker = Picker::from_fontsize(FontSize::new(8, 16));
+        let mut r = Rendered::build(&app.notebook, Some(picker), Default::default());
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 36)).unwrap();
+        let before = RENDERS.load(Relaxed);
+        let n = app.notebook.cells.len();
+        let key = |c| {
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            )
+        };
+        term.draw(|f| draw(f, &mut app, &mut r)).unwrap();
+        for _ in 0..3 {
+            for c in ['j', 'k'] {
+                for _ in 0..n - 1 {
+                    app.on_key(key(c), &mut r);
+                    term.draw(|f| draw(f, &mut app, &mut r)).unwrap();
+                }
+            }
+        }
+        // other tests render concurrently: the count is an upper bound for
+        // this one, so allow their share without letting a re-render per
+        // sweep (3 sweeps x 70 cells) through
+        let renders = RENDERS.load(Relaxed) - before;
+        assert!(
+            renders < 2 * n,
+            "{renders} renders for {n} cells in 3 sweeps"
+        );
+    }
+
+    /// Over the budget, the least recently seen blocks go first, and only
+    /// until the rest fits; the render window is never evicted.
+    #[test]
+    fn eviction_drops_least_recently_seen_until_within_budget() {
+        let nb = Notebook {
+            cells: Vec::new(),
+            extra: serde_json::Map::new(),
+        };
+        let mut r = Rendered::build(&nb, None, Default::default());
+        // three blocks of ~31 MiB each (lines cost 256 bytes): 92 MiB > 64
+        let big = |seen| {
+            let mut b = CellBlock::empty();
+            b.lines = vec![Line::default(); 120_000];
+            b.rendered = true;
+            b.seen = seen;
+            b
+        };
+        r.blocks = vec![big(5), big(1), big(9), big(3)];
+        r.evict(|i| i == 1); // block 1 is in the render window
+        let kept: Vec<bool> = r.blocks.iter().map(|b| b.rendered).collect();
+        // oldest outside the window is 3 (seen 3), then 0 (seen 5): two go
+        assert_eq!(kept, [false, true, true, false]);
     }
 }

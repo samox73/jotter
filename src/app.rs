@@ -1982,6 +1982,7 @@ pub(super) mod tests {
         std::fs::remove_file(&path).ok();
         let mut rendered = Rendered::build(&app.notebook, None, Default::default());
         // fake a draw: row 0 is the prompt, rows 1.. are the output viewport
+        rendered.relayout(80, &app.notebook);
         app.body = Rect::new(0, 0, 80, 30);
         app.content_lines = 100;
         app.hit = (0..30)
