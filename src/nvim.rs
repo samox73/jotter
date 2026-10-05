@@ -17,7 +17,7 @@ use rmpv::Value;
 use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
@@ -173,11 +173,17 @@ impl Backend {
         }
     }
 
-    /// `:w` inside the cell fired (BufWriteCmd): commit without exiting.
-    pub fn take_write_request(&mut self) -> bool {
+    /// `:w` inside the cell (BufWriteCmd), or the write half of `:wq`/`:x`/
+    /// `ZZ`: commit and save the notebook. `Some(true)` for `:w!`/`:wq!`:
+    /// save even if the file changed on disk.
+    pub fn take_write_request(&mut self) -> Option<bool> {
         match self {
-            Backend::Builtin(_) => false,
-            Backend::Nvim(c) => c.session.rpc.write_requested.swap(false, Ordering::Relaxed),
+            Backend::Builtin(_) => None,
+            Backend::Nvim(c) => match c.session.rpc.write_requested.swap(0, Ordering::Relaxed) {
+                1 => Some(false),
+                2 => Some(true),
+                _ => None,
+            },
         }
     }
 
@@ -261,7 +267,8 @@ struct Rpc {
     child: Child,
     stdin: ChildStdin,
     responses: mpsc::Receiver<(u64, Result<Value, String>)>,
-    write_requested: Arc<AtomicBool>,
+    /// Write intent from inside nvim (0 none, 1 write, 2 force write).
+    write_requested: Arc<AtomicU8>,
     /// Quit intent from inside nvim (0 none, 1 commit+exit, 2 discard+exit).
     quit_requested: Arc<AtomicU8>,
     next_id: u64,
@@ -301,7 +308,7 @@ impl Rpc {
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let (tx, responses) = mpsc::channel();
-        let write_requested = Arc::new(AtomicBool::new(false));
+        let write_requested = Arc::new(AtomicU8::new(0));
         let quit_requested = Arc::new(AtomicU8::new(0));
         let (wflag, qflag) = (write_requested.clone(), quit_requested.clone());
         std::thread::spawn(move || {
@@ -322,8 +329,16 @@ impl Rpc {
                         }
                     }
                     // notification: [2, method, params] — jotter hooks only
-                    [t, method, _] if t.as_u64() == Some(2) => match method.as_str() {
-                        Some("jotter_write") => wflag.store(true, Ordering::Relaxed),
+                    [t, method, params] if t.as_u64() == Some(2) => match method.as_str() {
+                        Some("jotter_write") => {
+                            // params: [bang], from v:cmdbang / <bang>
+                            let bang = params
+                                .as_array()
+                                .and_then(|p| p.first())
+                                .and_then(|b| b.as_u64())
+                                .is_some_and(|b| b != 0);
+                            wflag.store(if bang { 2 } else { 1 }, Ordering::Relaxed)
+                        }
                         Some("jotter_quit") => qflag.store(1, Ordering::Relaxed),
                         Some("jotter_bail") => qflag.store(2, Ordering::Relaxed),
                         _ => {}
@@ -395,15 +410,16 @@ impl NvimSession {
             .and_then(|a| a.first())
             .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow!("bad nvim_get_api_info reply"))?;
-        // :w commits to the notebook instead of E32-ing (cell buffers are
-        // buftype=acwrite, so writes route through the autocmd), and quit
+        // :w commits the cell and saves the notebook instead of E32-ing (cell
+        // buffers are buftype=acwrite, so writes route through the autocmd;
+        // :wq/:x/ZZ send a write before their quit), and quit
         // intent (:q/:wq/:x/ZZ/ZQ) leaves the cell instead of exiting the
         // embedded nvim — quits can't be vetoed after the fact, so the common
         // spellings are rewritten via cmdline abbreviations before they run.
         let mut setup = format!(
-            "autocmd BufWriteCmd jotter://* call rpcnotify({chan}, 'jotter_write') | setlocal nomodified\n\
+            "autocmd BufWriteCmd jotter://* call rpcnotify({chan}, 'jotter_write', v:cmdbang) | setlocal nomodified\n\
              command! -bang JotterQ call rpcnotify({chan}, <bang>0 ? 'jotter_bail' : 'jotter_quit')\n\
-             command! -bang JotterWq call rpcnotify({chan}, 'jotter_quit')\n\
+             command! -bang JotterWq call rpcnotify({chan}, 'jotter_write', <bang>0) | call rpcnotify({chan}, 'jotter_quit')\n\
              nnoremap ZZ <Cmd>JotterWq<CR>\n\
              nnoremap ZQ <Cmd>JotterQ!<CR>\n"
         );
@@ -976,32 +992,36 @@ mod tests {
         ));
         assert!(b.visual().is_none());
 
-        // :w routes through the BufWriteCmd hook into the commit flag
+        // :w routes through the BufWriteCmd hook into the write flag
         for c in [':', 'w'] {
             b.input(key(KeyCode::Char(c), KeyModifiers::NONE)).unwrap();
         }
         assert_eq!(b.cmdline(), Some(":w"));
         b.input(key(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
-        assert!(b.take_write_request());
-        assert!(!b.take_write_request());
+        assert_eq!(b.take_write_request(), Some(false));
+        assert_eq!(b.take_write_request(), None);
         assert_eq!(b.source(), "abc");
 
-        // quit intent leaves the cell instead of killing nvim: cmdline
-        // spellings and the ZZ/ZQ normal-mode keys, bang = discard
-        let mut cmdline_quit = |keys: &str| {
+        // quit and write intent from the cmdline and ZZ/ZQ: quits leave the
+        // cell instead of killing nvim (bang = discard), writes save the
+        // notebook (bang = even if it changed on disk)
+        let mut cmd = |keys: &str| {
             for c in keys.chars() {
                 b.input(key(KeyCode::Char(c), KeyModifiers::NONE)).unwrap();
             }
             b.input(key(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
-            b.take_quit_request()
+            (b.take_write_request(), b.take_quit_request())
         };
-        assert_eq!(cmdline_quit(":q"), Some(false));
-        assert_eq!(cmdline_quit(":q!"), Some(true));
-        assert_eq!(cmdline_quit(":wq"), Some(false));
-        assert_eq!(cmdline_quit(":wq!"), Some(false)); // write-forced, not discard
-        assert_eq!(cmdline_quit(":qa"), Some(false));
-        assert_eq!(cmdline_quit("ZZ"), Some(false)); // no ':' — plain keys + noop Enter
-        assert_eq!(cmdline_quit("ZQ"), Some(true));
+        assert_eq!(cmd(":w!"), (Some(true), None));
+        assert_eq!(cmd(":update"), (None, None)); // nothing modified: no write
+        assert_eq!(cmd(":q"), (None, Some(false)));
+        assert_eq!(cmd(":q!"), (None, Some(true)));
+        assert_eq!(cmd(":wq"), (Some(false), Some(false)));
+        assert_eq!(cmd(":wq!"), (Some(true), Some(false))); // write-forced, not discard
+        assert_eq!(cmd(":x"), (Some(false), Some(false)));
+        assert_eq!(cmd(":qa"), (None, Some(false)));
+        assert_eq!(cmd("ZZ"), (Some(false), Some(false))); // plain keys + noop Enter
+        assert_eq!(cmd("ZQ"), (None, Some(true)));
         assert_eq!(b.take_quit_request(), None);
         // nvim survived all of it: a real edit still round-trips
         b.input(key(KeyCode::Char('x'), KeyModifiers::NONE))

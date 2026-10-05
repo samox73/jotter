@@ -25,8 +25,8 @@ The Neovim backend is **experimental**. It works well for editing, but plugins t
 - Each cell gets its own Neovim buffer, so undo history and marks survive switching between cells.
 - The buffer's `filetype` is set from the cell (`python`, `markdown`, …), so filetype plugins and settings apply.
 - `:` and `/` command lines appear in jOtter's status line as you type them.
-- `:w` saves the cell back into the notebook (not the notebook to disk).
-- `:q`, `:wq`, `:x` and `ZZ` leave the cell and keep the edit. `:q!` and `ZQ` leave it and throw the edit away.
+- `:w` saves the cell into the notebook and the notebook to disk, like <kbd>w</kbd> outside the cell. If the file changed on disk since you opened or saved it, jOtter refuses; `:w!` saves anyway, like <kbd>W</kbd>.
+- `:wq`, `:x` and `ZZ` save the same way and leave the cell. `:q` leaves the cell and keeps the edit without saving the file. `:q!` and `ZQ` leave it and throw the edit away.
 - <kbd>Esc</kbd> in normal mode leaves the cell, as in the builtin editor, and <kbd>Shift</kbd>+<kbd>Enter</kbd> runs it.
 
 ## Your config and plugins

@@ -464,10 +464,25 @@ impl App {
         Ok(())
     }
 
+    /// `:w` from inside a cell: commit its text, then save like `w` (`:w!`
+    /// like `W`), with the on-disk-change refusal phrased in the editor's terms.
+    fn write_from_editor(&mut self, source: String, force: bool, rendered: &mut Rendered) {
+        self.update_cell_source(source, rendered);
+        if !force && self.changed_on_disk() {
+            self.message = Some("file changed on disk since open/save — :w! to overwrite".into());
+            return;
+        }
+        self.save_notebook(force);
+    }
+
+    fn changed_on_disk(&self) -> bool {
+        self.disk_mtime.is_some() && mtime(&self.path) != self.disk_mtime
+    }
+
     /// Save to `path`; `force` skips the external-modification check.
     /// Returns true on success.
     fn save_notebook(&mut self, force: bool) -> bool {
-        if !force && self.disk_mtime.is_some() && mtime(&self.path) != self.disk_mtime {
+        if !force && self.changed_on_disk() {
             self.message = Some("file changed on disk since open/save — W to overwrite".into());
             return false;
         }
@@ -957,8 +972,8 @@ impl App {
             Err(e) => {
                 // nvim died mid-edit: salvage the text into the builtin editor
                 let source = editor.source();
-                if editor.take_write_request() {
-                    self.update_cell_source(source.clone(), rendered); // honor a final :wq
+                if let Some(force) = editor.take_write_request() {
+                    self.write_from_editor(source.clone(), force, rendered); // honor a final :wq
                 }
                 self.editor = Some(Backend::Builtin(Editor::new(&source)));
                 self.message = Some(format!("nvim backend lost ({e:#}) — builtin editor"));
@@ -968,12 +983,13 @@ impl App {
         if let Some(notice) = self.editor.as_mut().and_then(|e| e.take_notice()) {
             self.message = Some(notice);
         }
-        // :w inside the cell (BufWriteCmd hook): commit but keep editing
+        // :w inside the cell (BufWriteCmd hook), or the write half of
+        // :wq/:x/ZZ: commit, save the notebook, keep editing
         if let Some(editor) = &mut self.editor
-            && editor.take_write_request()
+            && let Some(force) = editor.take_write_request()
         {
             let source = editor.source();
-            self.update_cell_source(source, rendered);
+            self.write_from_editor(source, force, rendered);
         }
         // :q/:wq/ZZ/... inside nvim: leave the cell instead of exiting nvim
         if let Some(editor) = &mut self.editor
@@ -1999,6 +2015,41 @@ pub(super) mod tests {
         app.on_mouse(wheel(5, true), &mut rendered);
         assert!(rendered.blocks[0].win_start() < out_pos, "output scrolled");
         assert_eq!(app.scroll, view_pos, "view untouched");
+    }
+
+    /// `:w` in the cell editor commits the cell and saves the file; after an
+    /// external change it refuses with the `:w!` hint, and `:w!` overwrites.
+    #[test]
+    fn write_from_editor_saves_and_respects_disk_changes() {
+        let path = std::env::temp_dir().join(format!("jotter-w-{}.ipynb", std::process::id()));
+        let nb = serde_json::json!({
+            "cells": [{"cell_type": "code", "metadata": {}, "execution_count": null,
+                       "outputs": [], "source": ["a = 1"]}],
+            "metadata": {}, "nbformat": 4, "nbformat_minor": 5
+        });
+        std::fs::write(&path, nb.to_string()).unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::open(path.clone(), None, tx).unwrap();
+        let mut rendered = Rendered::build(&app.notebook, None, Default::default());
+        let on_disk = || Notebook::open(&path).unwrap().cells[0].source.clone();
+
+        app.write_from_editor("a = 2".into(), false, &mut rendered);
+        assert_eq!(on_disk(), "a = 2");
+        assert!(!app.dirty);
+
+        std::thread::sleep(std::time::Duration::from_millis(20)); // distinct mtime
+        std::fs::write(&path, nb.to_string()).unwrap(); // someone else saved "a = 1"
+        app.write_from_editor("a = 3".into(), false, &mut rendered);
+        assert_eq!(on_disk(), "a = 1", "refused");
+        assert!(app.message.as_deref().unwrap().contains(":w!"));
+        assert_eq!(
+            app.notebook.cells[0].source, "a = 3",
+            "edit kept in the notebook"
+        );
+
+        app.write_from_editor("a = 3".into(), true, &mut rendered);
+        assert_eq!(on_disk(), "a = 3");
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]
