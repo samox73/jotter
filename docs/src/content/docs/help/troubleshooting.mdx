@@ -58,6 +58,10 @@ jOtter captures the mouse. Hold <kbd>Shift</kbd> while dragging to use your term
 
 <kbd>y</kbd><kbd>y</kbd> and <kbd>D</kbd> copy through the terminal's OSC 52 sequence. Some terminals disable it by default; in tmux, set `set -g set-clipboard on`.
 
+## No completions, signatures or docs after opening a notebook
+
+Completion after a `.`, the signature popup and <kbd>Shift</kbd>+<kbd>Tab</kbd> docs come from the running kernel, which only knows code that has run. Run the cells with your imports first, for example with <kbd>&lt;</kbd> (run every cell above). See [before cells have run](/jotter/guides/completion/#before-cells-have-run).
+
 ## My config is ignored
 
 The status line says `config ignored (…): …` when `config.toml` has a syntax error or an unknown key. The message names the problem; every setting falls back to its default until you fix it. The valid keys are listed in [Configuration](/jotter/reference/configuration/).

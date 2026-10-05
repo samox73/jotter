@@ -25,7 +25,7 @@ The popup lists each candidate with its kind (function, module, …) and signatu
 
 ### Where completions come from (Python)
 
-IPython has two completers. jOtter uses the fast one first: it looks at live objects, answers in milliseconds, but only knows about code that has already run. When it finds nothing, for example `np.` before the import cell has run, jOtter asks once more with Jedi, which reads the code without running it. Jedi is slower: the first request in a session takes about a second.
+IPython has two completers. jOtter uses the fast one first: it looks at live objects, answers in milliseconds, but only knows about code that has already run. When it finds nothing, jOtter asks once more with Jedi, which reads the code without running it. Jedi only sees the cell you are editing, so it helps when the import is in that same cell (`import numpy as np` and then `np.` a line below), not when it is in another cell that hasn't run. Jedi is slower: the first request in a session takes about a second.
 
 Plain names also complete from the notebook's own identifiers, nearest first, so `np` completes right after you type `import numpy as np`, before running anything.
 
@@ -35,8 +35,21 @@ Set [`jedi = true`](/jotter/reference/configuration/#jedi) to use Jedi for every
 
 When you type `(` after a function's name, a popup under the line shows its signature, and the argument you are typing is highlighted. The highlight moves with each `,` and jumps to a parameter when you type its name and `=`, as in `np.std(x, ddof=`. The popup closes when the cursor leaves the parentheses or when you leave insert mode. While the completion popup is open below the line, the signature moves above it.
 
-Like the docs below, signatures come from the running kernel: a function from a cell that hasn't run shows nothing. Turn the popup off with [`signature_help = false`](/jotter/reference/configuration/#signature_help).
+Like the docs below, signatures come from the running kernel: a function from a cell that hasn't run shows nothing (see [before cells have run](#before-cells-have-run)). Turn the popup off with [`signature_help = false`](/jotter/reference/configuration/#signature_help).
 
 ## Documentation
 
 <kbd>Shift</kbd>+<kbd>Tab</kbd> shows the documentation for the name under the cursor, or for the highlighted entry when the completion popup is open. Documentation comes from the running kernel, so the cell that defines or imports the name must have run. Any key closes the docs.
+
+## Before cells have run
+
+Completion, signatures and docs all ask the running kernel, and the kernel only knows what has run in it. Right after you open a notebook, nothing has run yet, so:
+
+| You type | Before the defining cell ran | After |
+| --- | --- | --- |
+| `np` (a plain name) | completes, from the notebook's own identifiers | completes |
+| `np.` (an attribute) | nothing, unless the import is in the same cell | completes |
+| `np.arange(` | no signature popup | signature popup |
+| <kbd>Shift</kbd>+<kbd>Tab</kbd> on `np.arange` | "no documentation found" | docs |
+
+The same goes for functions and variables you define yourself. Run the cells with your imports and definitions first: <kbd>Shift</kbd>+<kbd>Enter</kbd> on each, <kbd>&lt;</kbd> to run every cell above the selected one, or <kbd>X</kbd> to run them all (see [running code](/jotter/guides/running-code/)). This is how JupyterLab behaves too; editors like VS Code use a separate language server that reads the code instead, which jOtter doesn't.
