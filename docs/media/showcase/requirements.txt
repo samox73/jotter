@@ -1,0 +1,6 @@
+ipykernel
+matplotlib
+numpy
+scipy
+sympy
+tqdm

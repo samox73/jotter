@@ -1,0 +1,4 @@
+# Plot images up to 16 rows tall, and keep the notebook's own colours (the
+# Mandelbrot palette would be remapped to the terminal's otherwise).
+max_image_rows = 16
+recolor_plots = false

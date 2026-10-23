@@ -1,0 +1,6 @@
+# Plot settings for the showcase clip: a dark figure on the terminal background.
+figure.figsize: 6.5, 3
+figure.dpi: 90
+figure.facecolor: 0f141f
+savefig.facecolor: 0f141f
+axes.facecolor: 0f141f
