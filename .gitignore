@@ -6,3 +6,4 @@
 /docs/src/content/docs/reference/generated
 .claude/settings.local.json
 .claude/hooks/
+__pycache__/

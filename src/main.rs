@@ -19,6 +19,7 @@ use crossterm::event::{
     EnableFocusChange, EnableMouseCapture, Event, EventStream, KeyEventKind,
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
+use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use futures::{FutureExt, StreamExt};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -155,6 +156,10 @@ async fn main() -> Result<()> {
     ))
     .catch_unwind()
     .await;
+    // the last frame's images queue their deletes at drop like replaced
+    // ones, and the loop that wrote those is over: write them here
+    drop(rendered);
+    let _ = ui::flush_kitty_deletes(&mut std::io::stdout());
     leave_extras(enhanced);
     let _ = crossterm::execute!(std::io::stdout(), SetCursorStyle::DefaultUserShape);
     // The terminal may be gone (closed under us). ratatui::restore() and
@@ -202,7 +207,30 @@ async fn run(
             let _ = crossterm::execute!(std::io::stdout(), style);
             cursor_mode = mode;
         }
-        terminal.draw(|frame| ui::draw(frame, app, rendered))?;
+        // One synchronized update per frame (terminals without it ignore
+        // the mode), so the terminal never shows a half-drawn frame. Except
+        // a frame that sends a new kitty image: kitty paints a snapshot of
+        // the screen while an update is open, and with a multi-megabyte
+        // transmit inside it that snapshot now and then comes up with no
+        // images at all, which blanks frames of an inline animation. Such
+        // a frame is a single write anyway.
+        let sync = !ui::take_kitty_transmit();
+        if sync {
+            let _ = crossterm::queue!(std::io::stdout(), BeginSynchronizedUpdate);
+        }
+        let drawn = terminal.draw(|frame| ui::draw(frame, app, rendered));
+        // ended even when the draw failed: a terminal left inside a
+        // synchronized update stops painting until its timeout
+        if sync {
+            let _ = crossterm::execute!(std::io::stdout(), EndSynchronizedUpdate);
+        }
+        // Replaced images are deleted only now, after the update that placed
+        // their successors: kitty shows a snapshot of the screen for the
+        // whole update, and the snapshot still needs the old image (deleting
+        // it inside the update blanked an animation's frames now and then).
+        let deleted = ui::flush_kitty_deletes(&mut std::io::stdout());
+        drawn?;
+        deleted?;
         tokio::select! {
             maybe_event = term_events.next() => {
                 let Some(event) = maybe_event else { break };
@@ -225,9 +253,17 @@ async fn run(
                 }
             },
             Some(event) = kernel_events.recv() => {
-                app.apply_kernel_event(event, rendered);
-                // drain whatever else queued up before redrawing once
+                // Drain whatever else queued up before redrawing once. The
+                // drain is cheap, so a kernel can't outrun it; applying is
+                // the work, and a display updated faster than its images
+                // decode (an inline animation) keeps only its latest update,
+                // so the screen shows the newest frame instead of freezing
+                // behind the backlog.
+                let mut queued = vec![event];
                 while let Ok(event) = kernel_events.try_recv() {
+                    queue_kernel_event(&mut queued, event);
+                }
+                for event in queued {
                     app.apply_kernel_event(event, rendered);
                 }
             }
@@ -244,6 +280,17 @@ async fn run(
         }
     }
     Ok(())
+}
+
+/// Add `event` to the batch, dropping earlier updates of the same display:
+/// each replaces the whole output, so only the last one matters.
+fn queue_kernel_event(queued: &mut Vec<kernel::Event>, event: kernel::Event) {
+    if let kernel::Event::UpdateDisplay { display_id, .. } = &event {
+        queued.retain(
+            |e| !matches!(e, kernel::Event::UpdateDisplay { display_id: d, .. } if d == display_id),
+        );
+    }
+    queued.push(event);
 }
 
 fn on_term_event(app: &mut App, rendered: &mut Rendered, event: Event) -> Action {
@@ -294,4 +341,40 @@ fn external_edit(
         Err(e) => app.message = Some(format!("{editor_cmd} failed: {e}")),
     }
     let _ = std::fs::remove_file(&tmp);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Queued updates of one display collapse to the latest; everything
+    /// else keeps its order.
+    #[test]
+    fn queued_display_updates_collapse_to_the_latest() {
+        let update = |id: &str, n: u8| kernel::Event::UpdateDisplay {
+            display_id: id.into(),
+            output: serde_json::json!(n),
+        };
+        let mut queued = Vec::new();
+        queue_kernel_event(&mut queued, update("a", 1));
+        queue_kernel_event(
+            &mut queued,
+            kernel::Event::Clear {
+                parent: "p".into(),
+                wait: false,
+            },
+        );
+        queue_kernel_event(&mut queued, update("b", 2));
+        queue_kernel_event(&mut queued, update("a", 3));
+        let seen: Vec<String> = queued
+            .iter()
+            .map(|e| match e {
+                kernel::Event::UpdateDisplay { display_id, output } => {
+                    format!("{display_id}{output}")
+                }
+                _ => "clear".into(),
+            })
+            .collect();
+        assert_eq!(seen, ["clear", "b2", "a3"]);
+    }
 }

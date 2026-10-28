@@ -13,7 +13,7 @@
 Open, edit and run real `.ipynb` notebooks in your terminal, with vim keys, inline plots and rendered LaTeX, and keystroke latency so low that holding a key is a non-event.
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/samox73/jotter/main/docs/public/media/hero.gif" alt="jOtter opening a notebook and running it: a markdown cell with an equation, code cells with output, and an inline plot" width="720"/>
+<img src="https://raw.githubusercontent.com/samox73/jotter/main/docs/public/media/hero.gif" alt="jOtter running a notebook: SymPy finds the fixed points of the Lorenz system, then the Lorenz attractor and a Mandelbrot zoom play as an inline animation" width="720"/>
 </div>
 
 - **Your notebooks, untouched:** opens and saves `.ipynb` losslessly, byte for byte like Jupyter, so collaborators on JupyterLab never notice.

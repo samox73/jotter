@@ -65,7 +65,8 @@ def record-scene [name: string, repo: string, out: string, python_prefix: string
     let work = $"/tmp/jotter-demo/($name)"
     rm -rf $work
     mkdir $work
-    glob ($media | path join notebooks *) | each {|f| cp $f $work } | ignore
+    # files only: a __pycache__ appears next to a notebook's helper module
+    glob ($media | path join notebooks *) | where {|f| ($f | path type) == file } | each {|f| cp $f $work } | ignore
     # a project venv next to the notebooks, as the docs recommend: jotter
     # finds its kernel there (the pinned Python, linked in)
     let venv = $work | path join .venv

@@ -46,7 +46,7 @@
             # the terminal gallery (scenes/terminals.nu); xterm needs Xwayland,
             # gnome-terminal a session bus
             foot alacritty wezterm ghostty tmux kdePackages.konsole gnome-terminal xterm xwayland dbus
-            (python3.withPackages (p: with p; [ ipykernel numpy matplotlib tqdm sympy ]))
+            (python3.withPackages (p: with p; [ ipykernel numpy scipy matplotlib tqdm sympy ]))
           ];
           # software OpenGL from this Mesa for kitty, also where the host has
           # no GPU drivers (CI runners)
