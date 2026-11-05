@@ -410,7 +410,7 @@ impl App {
     fn check_autosave(&mut self) {
         let side = self.autosave_path();
         let Some(when) = mtime(&side) else { return };
-        match Notebook::open(&side) {
+        match Notebook::read_ipynb(&side) {
             Ok(saved) => match differing_cells(&saved, &self.notebook) {
                 0 => {
                     let _ = std::fs::remove_file(&side);
@@ -456,7 +456,9 @@ impl App {
         if let Some(dir) = side.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        match self.notebook.save(&side) {
+        // always JSON: it keeps the outputs a `.py` can't, and its name ends
+        // like the notebook's
+        match self.notebook.write_ipynb(&side) {
             Ok(()) => self.autosave_pending = false,
             Err(e) => self.message = Some(format!("autosave failed: {e:#}")),
         }
@@ -465,6 +467,20 @@ impl App {
     fn touch(&mut self) {
         self.dirty = true;
         self.autosave_pending = true;
+    }
+
+    /// Outputs or execution counts changed: worth an autosave (the sidecar
+    /// keeps them for a crash), but only a change to the file when the
+    /// format stores them — a `.py` never does, so nothing to save.
+    pub(crate) fn touch_outputs(&mut self) {
+        self.autosave_pending = true;
+        if self.stores_outputs() {
+            self.dirty = true;
+        }
+    }
+
+    pub fn stores_outputs(&self) -> bool {
+        !crate::notebook::is_text(&self.path)
     }
 
     /// External-modification check, run on focus-gain and the periodic tick.
@@ -529,7 +545,7 @@ impl App {
     /// Returns true on success.
     fn save_notebook(&mut self, force: bool, rendered: &mut Rendered) -> bool {
         if self.is_scratch() {
-            self.message = Some("scratchpad has no file — :w name.ipynb".into());
+            self.message = Some("scratchpad has no file — :w name.ipynb (or name.py)".into());
             return false;
         }
         if !force && self.changed_on_disk() {
@@ -1056,6 +1072,9 @@ impl App {
         if self.dirty {
             self.confirm = Some(Confirm::Quit);
         } else {
+            // a clean buffer's sidecar holds at most outputs a `.py` can't
+            // store; left behind, every later open would offer them back
+            let _ = std::fs::remove_file(self.autosave_path());
             self.should_quit = true;
         }
     }
@@ -1873,7 +1892,7 @@ impl App {
         let msg_id = kernel.execute(cell.source.clone());
         rendered.rebuild_cell(idx, cell);
         self.running.insert(msg_id, idx);
-        self.touch();
+        self.touch_outputs();
     }
 
     pub fn apply_kernel_event(&mut self, event: Event, rendered: &mut Rendered) {
@@ -1937,6 +1956,7 @@ impl App {
             Event::UpdateDisplay { display_id, output } => {
                 // ponytail: scans every output per update; fine for thousands
                 // of outputs, index display_ids if it ever shows in profiles
+                let mut any = false;
                 for (idx, cell) in self.notebook.cells.iter_mut().enumerate() {
                     let mut hit = false;
                     for o in cell.outputs.iter_mut().flatten() {
@@ -1948,9 +1968,11 @@ impl App {
                     }
                     if hit {
                         rendered.rebuild_cell(idx, cell);
-                        self.dirty = true;
-                        self.autosave_pending = true;
+                        any = true;
                     }
+                }
+                if any {
+                    self.touch_outputs();
                 }
             }
             Event::Complete {
@@ -1969,7 +1991,7 @@ impl App {
                     }
                     cell.push_output(output);
                     rendered.rebuild_cell(idx, cell);
-                    self.touch();
+                    self.touch_outputs();
                 }
             }
             Event::Clear { parent, wait } => {
@@ -1979,7 +2001,7 @@ impl App {
                     let cell = &mut self.notebook.cells[idx];
                     cell.outputs = Some(Vec::new());
                     rendered.rebuild_cell(idx, cell);
-                    self.touch();
+                    self.touch_outputs();
                 }
             }
             Event::ExecutionCount { parent, count } => {
@@ -1987,7 +2009,7 @@ impl App {
                     self.notebook.cells[idx]
                         .extra
                         .insert("execution_count".into(), count.into());
-                    self.touch();
+                    self.touch_outputs();
                     self.started.insert(parent, Instant::now()); // no longer queued
                     if self.follow {
                         self.selected = idx;
@@ -2239,6 +2261,74 @@ pub(super) mod tests {
         app.on_key(key('r'), &mut r);
         assert_eq!(sources(&app), ["unsaved work"]);
         assert!(app.dirty);
+    }
+
+    /// A `.py` notebook: outputs live in memory only. They never dirty the
+    /// buffer (there is nothing to save), the sidecar still keeps them for a
+    /// crash, `w` writes percent without them, and `:w x.ipynb` has them.
+    #[test]
+    fn py_notebooks_keep_outputs_in_memory_only() {
+        let dir = std::env::temp_dir().join(format!("jotter-py-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("nb.py");
+        std::fs::write(&path, "# %%\nx = 1\n\n# %% [markdown]\n# hi\n").unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::open(path.clone(), None, tx).unwrap();
+        let mut r = Rendered::build(&app.notebook, None, Default::default());
+        assert_eq!(sources(&app), ["x = 1", "hi"]);
+        assert!(!app.stores_outputs());
+        app.running.insert("m".into(), 0);
+        app.apply_kernel_event(
+            Event::Output {
+                parent: "m".into(),
+                output: stream("out\n"),
+            },
+            &mut r,
+        );
+        app.apply_kernel_event(
+            Event::ExecutionCount {
+                parent: "m".into(),
+                count: 3,
+            },
+            &mut r,
+        );
+        assert!(!app.dirty, "outputs can't be saved to a .py");
+        assert!(app.autosave_pending, "but the sidecar keeps them");
+        app.maybe_autosave();
+        let side = Notebook::read_ipynb(&app.autosave_path()).unwrap();
+        assert_eq!(side.cells[0].outputs.as_ref().unwrap().len(), 1);
+        // a clean quit drops the sidecar instead of offering the outputs back
+        app.quit();
+        assert!(app.should_quit && !app.autosave_path().exists());
+        // clearing outputs isn't a change to the file either; a source edit is
+        app.clear_outputs(0..1, &mut r);
+        assert!(!app.dirty);
+        app.undo(&mut r);
+        assert!(!app.dirty);
+        app.update_cell_source("x = 2".into(), &mut r);
+        assert!(app.dirty);
+        assert!(app.save_notebook(false, &mut r));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# %%\nx = 2\n\n# %% [markdown]\n# hi\n"
+        );
+        // save-as converts: the .ipynb gets the in-memory outputs
+        let ipynb = dir.join("nb.ipynb");
+        assert!(app.save_as(ipynb.to_str().unwrap(), &mut r));
+        let saved = Notebook::read_ipynb(&ipynb).unwrap();
+        assert_eq!(saved.cells[0].outputs.as_ref().unwrap().len(), 1);
+        assert_eq!(saved.cells[0].execution_count(), Some(3));
+        assert!(app.stores_outputs());
+        // a new .py is a plain script until it has more than one cell
+        let fresh = dir.join("new.py");
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::open(fresh.clone(), None, tx).unwrap();
+        let mut r = Rendered::build(&app.notebook, None, Default::default());
+        app.update_cell_source("print(1)".into(), &mut r);
+        assert!(app.save_notebook(false, &mut r));
+        assert_eq!(std::fs::read_to_string(&fresh).unwrap(), "print(1)\n");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -18,7 +18,7 @@ Open, edit and run real `.ipynb` notebooks in your terminal, with vim keys, inli
 <img src="https://raw.githubusercontent.com/samox73/jotter/main/docs/public/media/hero.gif" alt="jOtter running a notebook: SymPy finds the fixed points of the Lorenz system, then the Lorenz attractor and a Mandelbrot zoom play as an inline animation" width="720"/>
 </div>
 
-- **Your notebooks, untouched:** opens and saves `.ipynb` losslessly, byte for byte like Jupyter, so collaborators on JupyterLab never notice.
+- **Your notebooks, untouched:** opens and saves `.ipynb` losslessly, byte for byte like Jupyter, so collaborators on JupyterLab never notice. Keeps notebooks as `.py` scripts (jupytext's percent format) too, so outputs never reach git.
 - **Plots and math in the terminal:** matplotlib figures inline (kitty graphics, sixel, iTerm2), drawn in your terminal's colours, and LaTeX rendered without a TeX install.
 - **Vim keys everywhere:** a modal cell editor, or an embedded Neovim with your own config.
 - **Any kernel:** finds your project's venv, uv, conda or pixi environment on its own.

@@ -8,6 +8,20 @@ import Clip from '../../../components/Clip.astro';
 
 jOtter writes standard nbformat 4 JSON with the same layout as JupyterLab, so switching tools doesn't cause noisy diffs. Its autosaves live in `~/.local/state/jotter/`, never in your repository.
 
+## Notebooks as `.py` files
+
+If your repository keeps notebooks as scripts, so that outputs never reach git, jOtter opens and saves them directly: `jotter analysis.py`.
+
+- A `.py` in [jupytext's percent format](https://jupytext.readthedocs.io/en/latest/formats-scripts.html#the-percent-format), with `# %%` cell markers as VS Code, Spyder and PyCharm write them, opens with its cells. `# %% [markdown]` blocks are markdown cells. Magics such as `%matplotlib inline` are commented out in the file and uncommented in the cell, as jupytext does.
+- Any other `.py` opens as one code cell, and saves as a plain script again as long as it stays one cell.
+
+A `.py` can't hold outputs, execution counts or cell ids. Outputs stay in memory while jOtter is open: running cells doesn't mark the notebook as modified, <kbd>q</kbd> quits without asking, and the autosave keeps them for crash recovery. To keep outputs, save as a notebook with `:w analysis.ipynb`; `:w analysis.py` converts the other way.
+
+A file jupytext wrote is saved back byte for byte, with its header (the kernelspec and jupytext's pairing settings) untouched, so a paired setup (`jupytext --set-formats ipynb,py:percent`) sees only the lines you changed. jOtter doesn't add a header to a file that has none; the kernel then comes from `--kernel` or the [usual lookup](/jotter/getting-started/kernels/).
+
+Not supported: jupytext's other formats (light, Rmd, MyST) and marimo notebooks. Convert them with `jupytext --to py:percent`.
+
+
 ## Clearing outputs before committing
 
 Outputs, especially images, make diffs large. Press <kbd>C</kbd> to clear all outputs, then <kbd>w</kbd> to save. <kbd>u</kbd> brings them back if you change your mind.

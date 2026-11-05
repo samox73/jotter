@@ -11,6 +11,17 @@ pub struct Notebook {
     pub cells: Vec<Cell>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+    /// A percent file's leading `# ---` YAML block (jupytext's pairing config
+    /// and kernelspec), kept verbatim for the next `.py` save. Never part of
+    /// the JSON form.
+    #[serde(skip)]
+    pub header: Option<String>,
+}
+
+/// Text formats (jupytext percent, plain scripts) hold sources only: no
+/// outputs, counts or ids reach the file.
+pub fn is_text(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "py")
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -128,10 +139,23 @@ impl Notebook {
         Notebook {
             cells: vec![Cell::new_code()],
             extra,
+            header: None,
         }
     }
 
+    /// Read `path` in the format its extension says (`.py`: percent or a
+    /// plain script; anything else: nbformat JSON).
     pub fn open(path: &Path) -> Result<Self> {
+        if !is_text(path) {
+            return Self::read_ipynb(path);
+        }
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        Ok(crate::percent::read(&text))
+    }
+
+    /// nbformat JSON regardless of the extension (the autosave sidecar).
+    pub fn read_ipynb(path: &Path) -> Result<Self> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut nb: Self =
@@ -158,10 +182,17 @@ impl Notebook {
         }
     }
 
-    /// Atomic save: write sibling temp file, fsync, then rename over the
-    /// original — a crash mid-save never leaves a corrupt notebook.
+    /// Write `path` in the format its extension says, atomically.
     pub fn save(&self, path: &Path) -> Result<()> {
-        use std::io::Write;
+        if is_text(path) {
+            write_atomic(path, crate::percent::write(self).as_bytes())
+        } else {
+            self.write_ipynb(path)
+        }
+    }
+
+    /// nbformat JSON regardless of the extension (the autosave sidecar).
+    pub fn write_ipynb(&self, path: &Path) -> Result<()> {
         // byte-identical to nbformat.write: sorted keys (serde_json::Map is a
         // BTreeMap; going through Value also sorts the typed Cell fields),
         // 1-space indent, trailing newline — no diff noise in git
@@ -186,17 +217,26 @@ impl Notebook {
         )?;
         let mut json = String::from_utf8(buf)?;
         json.push('\n');
-        let tmp = path.with_extension("ipynb.tmp");
-        let mut f =
-            std::fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
-        f.write_all(json.as_bytes())
-            .with_context(|| format!("writing {}", tmp.display()))?;
-        f.sync_all()
-            .with_context(|| format!("syncing {}", tmp.display()))?;
-        drop(f);
-        std::fs::rename(&tmp, path).with_context(|| format!("renaming onto {}", path.display()))?;
-        Ok(())
+        write_atomic(path, json.as_bytes())
     }
+}
+
+/// Atomic save: write a sibling `<name>.tmp`, fsync, then rename over the
+/// original — a crash mid-save never leaves a corrupt notebook.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    let tmp = path.with_file_name(name);
+    let mut f =
+        std::fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+    f.write_all(bytes)
+        .with_context(|| format!("writing {}", tmp.display()))?;
+    f.sync_all()
+        .with_context(|| format!("syncing {}", tmp.display()))?;
+    drop(f);
+    std::fs::rename(&tmp, path).with_context(|| format!("renaming onto {}", path.display()))?;
+    Ok(())
 }
 
 /// nbformat cell id: 8 hex chars (schema: 1-64 of [a-zA-Z0-9-_]).

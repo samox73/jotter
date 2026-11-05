@@ -86,7 +86,7 @@ jOtter does less, differently:
 
 If you live in Neovim, [molten-nvim](https://github.com/benlubas/molten-nvim) sends code from a buffer to a kernel and shows the output in floating windows, with images through [image.nvim](https://github.com/3rd/image.nvim). [jupytext.nvim](https://github.com/GCBallesteros/jupytext.nvim) opens `.ipynb` files as plain-text scripts. Together you get your whole editor, your language server across the file, and kernels on remote Jupyter servers.
 
-The trade-off is that the notebook isn't the thing you edit: cells become comment markers in a script, outputs live in Neovim windows until you export them back with molten, and what is saved depends on the jupytext conversion. jOtter keeps the notebook as a notebook, with outputs under each cell and saved in the file, and still lets you edit each cell in [your own Neovim](/jotter/guides/neovim/).
+The trade-off is that the notebook isn't the thing you edit: cells become comment markers in a script, outputs live in Neovim windows until you export them back with molten, and what is saved depends on the jupytext conversion. jOtter keeps the notebook as a notebook, with outputs under each cell and saved in the file, and still lets you edit each cell in [your own Neovim](/jotter/guides/neovim/). If your notebooks live as percent-format scripts, jOtter opens those too and saves them back the way jupytext would, see [Notebooks as `.py` files](/jotter/guides/git/#notebooks-as-py-files).
 
 ## JupyterLab and VS Code
 
