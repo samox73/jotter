@@ -10,7 +10,7 @@ homepage = "https://samox73.github.io/jotter"
 readme = "README.md"
 keywords = ["jupyter", "notebook", "tui", "ipynb", "terminal"]
 categories = ["command-line-utilities", "science"]
-include = ["src/**/*", "LICENSE-*", "licenses/*", "README.md"]
+include = ["src/**/*", "/LICENSE-*", "licenses/*", "README.md"]
 
 [[bin]]
 name = "jotter"
