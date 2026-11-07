@@ -17,11 +17,11 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       # the kernel and nvim layers are only exercised against the real
-      # programs: their tests are #[ignore]d and need ipykernel and nvim
+      # programs: their tests are #[ignore]d and need ipykernel, jupytext and nvim
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install ipykernel
+      - run: pip install ipykernel jupytext
       - uses: rhysd/action-setup-vim@v1
         with:
           neovim: true
