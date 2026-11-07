@@ -53,3 +53,5 @@ jOtter is built with [Claude Code](https://claude.com/claude-code). I direct the
 ## License
 
 Licensed under either of [Apache License 2.0](https://github.com/samox73/jotter/blob/main/LICENSE-APACHE) or [MIT](https://github.com/samox73/jotter/blob/main/LICENSE-MIT), at your option.
+
+`src/percent.rs` reimplements the percent format of [jupytext](https://github.com/mwouts/jupytext) by Marc Wouts, MIT licensed; see [licenses/jupytext-MIT.txt](https://github.com/samox73/jotter/blob/main/licenses/jupytext-MIT.txt).

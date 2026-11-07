@@ -7,6 +7,10 @@
 //! file jupytext wrote round-trips byte for byte and jupytext reads what we
 //! write the same way. Python only. Outputs, counts and ids never reach the
 //! file; a file without markers is one code cell and stays marker-less.
+//!
+//! jupytext is MIT licensed, Copyright (c) 2018-2026 Marc Wouts
+//! (<https://github.com/mwouts/jupytext>); the notice is in
+//! `licenses/jupytext-MIT.txt`.
 
 use crate::notebook::{Cell, Notebook, new_cell_id};
 use serde_json::{Map, Value};
