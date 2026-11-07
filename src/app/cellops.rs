@@ -32,13 +32,26 @@ pub(super) fn push_capped(stack: &mut Vec<CellOp>, op: CellOp) {
     }
 }
 
+impl CellOp {
+    /// Touches outputs and counts only (clear outputs, and its undo): no
+    /// change to a file that doesn't store them.
+    fn outputs_only(&self) -> bool {
+        match self {
+            CellOp::SetOutputs(..) => true,
+            CellOp::Batch(ops) => ops.iter().all(CellOp::outputs_only),
+            _ => false,
+        }
+    }
+}
+
 impl App {
     /// Perform `op` as a new undo step (clears redo).
     pub(super) fn record(&mut self, op: CellOp, rendered: &mut Rendered) {
+        let outputs_only = op.outputs_only();
         let inverse = self.apply(op, rendered);
         push_capped(&mut self.undo_stack, inverse);
         self.redo_stack.clear();
-        self.touch();
+        self.touch_for(outputs_only);
     }
 
     pub(super) fn undo(&mut self, rendered: &mut Rendered) {
@@ -46,9 +59,10 @@ impl App {
             self.message = Some("nothing to undo".into());
             return;
         };
+        let outputs_only = op.outputs_only();
         let inverse = self.apply(op, rendered);
         push_capped(&mut self.redo_stack, inverse);
-        self.touch();
+        self.touch_for(outputs_only);
         self.message = Some("undone (Ctrl+r redoes)".into());
     }
 
@@ -57,10 +71,19 @@ impl App {
             self.message = Some("nothing to redo".into());
             return;
         };
+        let outputs_only = op.outputs_only();
         let inverse = self.apply(op, rendered);
         push_capped(&mut self.undo_stack, inverse);
-        self.touch();
+        self.touch_for(outputs_only);
         self.message = Some("redone".into());
+    }
+
+    fn touch_for(&mut self, outputs_only: bool) {
+        if outputs_only {
+            self.touch_outputs();
+        } else {
+            self.touch();
+        }
     }
 
     /// Perform one cell op (model, render cache, running map, selection) and

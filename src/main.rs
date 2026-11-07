@@ -7,6 +7,7 @@ mod latex;
 mod log;
 mod notebook;
 mod nvim;
+mod percent;
 mod recolor;
 mod ui;
 
@@ -27,14 +28,16 @@ use ui::Rendered;
 
 /// A fast Jupyter notebook TUI
 ///
-/// Open, edit and run .ipynb notebooks in the terminal, with vim keys, inline
-/// plots and rendered LaTeX. Press ? inside for the keys.
+/// Open, edit and run .ipynb notebooks (or .py scripts with `# %%` cell
+/// markers) in the terminal, with vim keys, inline plots and rendered LaTeX.
+/// Press ? inside for the keys.
 ///
 /// Documentation: https://samox73.github.io/jotter/
 #[derive(Parser)]
 #[command(name = "jotter", version)]
 struct Args {
-    /// Path to the .ipynb file to open (none: a scratchpad; `:w name.ipynb` saves it)
+    /// Notebook to open: .ipynb, or .py in jupytext's percent format / a plain
+    /// script (outputs stay in memory). None: a scratchpad; `:w name` saves it
     notebook: Option<PathBuf>,
     /// Kernelspec name (default: the notebook's kernelspec, then python3)
     #[arg(long)]

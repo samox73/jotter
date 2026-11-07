@@ -3024,6 +3024,7 @@ mod tests {
         let nb = Notebook {
             cells: Vec::new(),
             extra: serde_json::Map::new(),
+            header: None,
         };
         let mut r = Rendered::build(&nb, None, Default::default());
         for (name, theme) in ThemeSet::load_defaults().themes {
@@ -3109,6 +3110,7 @@ mod tests {
         let nb = Notebook {
             cells: vec![cell],
             extra: serde_json::Map::new(),
+            header: None,
         };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
         let mut r = Rendered::build(&nb, Some(picker), Default::default());
@@ -3131,6 +3133,7 @@ mod tests {
         let nb = Notebook {
             cells: vec![],
             extra: serde_json::Map::new(),
+            header: None,
         };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
         let r = Rendered::build(&nb, Some(picker), Default::default());
@@ -3165,6 +3168,7 @@ mod tests {
         let nb = Notebook {
             cells: vec![cell],
             extra: serde_json::Map::new(),
+            header: None,
         };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
         let mut r = Rendered::build(&nb, Some(picker), Default::default());
@@ -3195,6 +3199,7 @@ mod tests {
         let nb = Notebook {
             cells: vec![cell],
             extra: serde_json::Map::new(),
+            header: None,
         };
         let mut r = Rendered::build(&nb, None, Default::default());
         r.ensure(0, &nb.cells[0]);
@@ -3220,6 +3225,7 @@ mod tests {
         let nb = Notebook {
             cells: vec![],
             extra: serde_json::Map::new(),
+            header: None,
         };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
         let r = Rendered::build(&nb, Some(picker), Default::default());
@@ -3257,6 +3263,7 @@ mod tests {
             let nb = Notebook {
                 cells: vec![],
                 extra: serde_json::Map::new(),
+                header: None,
             };
             let r = Rendered::build(&nb, None, Default::default());
             r.render_markdown(src, None, false)
@@ -3275,6 +3282,7 @@ mod tests {
         let nb = Notebook {
             cells: vec![cell],
             extra: serde_json::Map::new(),
+            header: None,
         };
         let mut r = Rendered::build(&nb, None, Default::default());
         r.ensure(0, &nb.cells[0]);
@@ -3601,6 +3609,7 @@ mod tests {
         let nb = Notebook {
             cells,
             extra: serde_json::Map::new(),
+            header: None,
         };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
         for p in [Some(picker), None] {
@@ -3691,6 +3700,7 @@ mod tests {
         let nb = Notebook {
             cells: vec![cell],
             extra: serde_json::Map::new(),
+            header: None,
         };
         let mut r = Rendered::build(&nb, None, Default::default()); // no graphics -> math becomes unicode approx
         r.ensure(0, &nb.cells[0]);
@@ -3761,6 +3771,7 @@ mod tests {
         let nb = Notebook {
             cells: Vec::new(),
             extra: serde_json::Map::new(),
+            header: None,
         };
         let mut r = Rendered::build(&nb, None, Default::default());
         // three blocks of ~31 MiB each (lines cost 256 bytes): 92 MiB > 64

@@ -32,7 +32,7 @@ jobs:
           strip jotter
           ./jotter --generate gen # man page + shell completions
           mv gen/man gen/completions .
-          tar czf jotter-${{ matrix.arch }}-${{ matrix.os }}.tar.gz jotter man completions README.md LICENSE-MIT LICENSE-APACHE
+          tar czf jotter-${{ matrix.arch }}-${{ matrix.os }}.tar.gz jotter man completions README.md LICENSE-MIT LICENSE-APACHE licenses
       - uses: actions/upload-artifact@v4
         with:
           name: jotter-${{ matrix.target }}
