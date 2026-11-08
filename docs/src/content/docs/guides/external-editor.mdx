@@ -14,7 +14,10 @@ The editor is `$VISUAL`, then `$EDITOR`, then `vi`:
 
 ```sh
 EDITOR=hx jotter notebook.ipynb
+VISUAL='emacs -nw -Q' jotter notebook.ipynb
 ```
+
+The value is a shell command, as with git: arguments, quoting, `~` and `$HOME` all work, and the cell's temporary file is appended as the last argument.
 
 The cell is written to a temporary file whose extension matches the cell's language (`.py`, `.jl`, `.md`, …), so your editor's syntax highlighting, language server and formatter all apply.
 

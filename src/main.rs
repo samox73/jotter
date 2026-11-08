@@ -310,6 +310,17 @@ fn on_term_event(app: &mut App, rendered: &mut Rendered, event: Event) -> Action
     Action::None
 }
 
+/// `$VISUAL` is a shell command, as for git: `emacs -nw -Q`, `code --wait`,
+/// `~/bin/ed`. The file travels as `$1`, so the shell never re-parses it.
+fn editor_command(editor: &str, file: &std::path::Path) -> std::process::Command {
+    let mut c = std::process::Command::new("sh");
+    c.arg("-c")
+        .arg(format!("{editor} \"$@\""))
+        .arg("jotter")
+        .arg(file);
+    c
+}
+
 /// Suspend the TUI, open the selected cell in $VISUAL/$EDITOR, read it back.
 fn external_edit(
     terminal: &mut ratatui::DefaultTerminal,
@@ -329,7 +340,7 @@ fn external_edit(
     let result = std::fs::write(&tmp, &cell.source).and_then(|()| {
         leave_extras(enhanced);
         ratatui::restore();
-        let status = std::process::Command::new(&editor_cmd).arg(&tmp).status();
+        let status = editor_command(&editor_cmd, &tmp).status();
         *terminal = ratatui::init();
         clear_screen(); // the editor's screen is not ours to diff against
         enter_extras(enhanced);
@@ -349,6 +360,19 @@ fn external_edit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `VISUAL='cp /dev/null'` must run `cp` with `/dev/null` and the cell file
+    /// as separate arguments, emptying the file.
+    #[test]
+    fn editor_arguments_are_split_and_the_file_is_appended() {
+        let tmp = std::env::temp_dir().join(format!("jotter-editor-test-{}", std::process::id()));
+        std::fs::write(&tmp, "original").unwrap();
+        let status = editor_command("cp /dev/null", &tmp).status().unwrap();
+        let after = std::fs::read_to_string(&tmp).unwrap();
+        let _ = std::fs::remove_file(&tmp);
+        assert!(status.success());
+        assert_eq!(after, "");
+    }
 
     /// Queued updates of one display collapse to the latest; everything
     /// else keeps its order.
