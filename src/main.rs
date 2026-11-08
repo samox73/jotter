@@ -351,6 +351,12 @@ fn external_edit(
             Ok(source) => app.apply_external_edit(source, rendered),
             Err(e) => app.message = Some(format!("read-back failed: {e}")),
         },
+        // sh's own "not found" line is wiped by clear_screen(), so say it ourselves
+        Ok(status) if status.code() == Some(127) => {
+            app.message = Some(format!(
+                "{editor_cmd}: command not found (check $VISUAL/$EDITOR)"
+            ));
+        }
         Ok(status) => app.message = Some(format!("{editor_cmd} exited with {status}")),
         Err(e) => app.message = Some(format!("{editor_cmd} failed: {e}")),
     }
