@@ -36,6 +36,8 @@ commit_preprocessors = [
   # entries starting with a key name would be capitalised (Gg, Zt)
   { pattern = '^feat: gg and a vim jump list \(Ctrl\+o / Ctrl\+i\)', replace = "feat: vim jump list (Ctrl+o / Ctrl+i) and gg" },
   { pattern = '^feat: zt, zz, zb scroll the selected cell to the top, middle, bottom', replace = "feat: scroll the selected cell to the top, middle or bottom with zt, zz, zb" },
+  # squash-merged PR whose title isn't a conventional commit
+  { pattern = '^Showcase clip tape, and fix flicker on updating kitty images \(#2\)', replace = "fix: updating plots no longer flicker or blank in kitty, and each frame is drawn as one synchronized update" },
 ]
 commit_parsers = [
   { message = "^feat", group = "<!-- 0 -->Features" },

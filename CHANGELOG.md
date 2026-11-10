@@ -2,6 +2,22 @@
 
 Every release of jOtter. The same notes are on each [GitHub release](https://github.com/samox73/jotter/releases).
 
+## 0.6.0 (2026-11-10)
+
+### Features
+
+- Support jupytext percent format and plain python files (#4) ([e9982e3](https://github.com/samox73/jotter/commit/e9982e352bb8371e9b30c4cda9b6a26241b0adaf))
+
+### Bug fixes
+
+- Minimum Rust is 1.90, and openSUSE needs --allow-unsigned-rpm ([1e3f617](https://github.com/samox73/jotter/commit/1e3f6177364fd99a568518778bc6b9995eea7bb3))
+- Updating plots no longer flicker or blank in kitty, and each frame is drawn as one synchronized update ([43b73b5](https://github.com/samox73/jotter/commit/43b73b597e16578ce878e033d48f5ad4d5bad740))
+- Run editor string through sh (#6) ([f95998a](https://github.com/samox73/jotter/commit/f95998a6b7282814fc8e8e7ea02822e48bd023ee))
+
+### Documentation
+
+- Say that jOtter is built with Claude Code ([10f9770](https://github.com/samox73/jotter/commit/10f9770feae3af7416a47460ced5dc6b2d0e6f7b))
+
 ## 0.5.2 (2026-10-22)
 
 ### Bug fixes
