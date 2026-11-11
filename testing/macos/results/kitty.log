@@ -1,0 +1,22 @@
+1794409781.634 INFO  jotter::kernel: kernelspec 'python3' from /Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3, argv ["/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"]
+1794409781.637 INFO  jotter::kernel: kernel spawned, pid Some(45585), connection file /Users/czyber/Library/Jupyter/runtime/jotter-7501a741-008c-41a8-b6fa-1f5afa391066.json
+1794409781.642 INFO  jotter: terminal: graphics Kitty, font 14x25 px, keyboard protocol kitty
+1794409781.642 INFO  status: starting kernel 'python3'...
+1794409783.112 DEBUG zeromq::reconnect: Reconnect task started for endpoint: tcp://127.0.0.1:61369
+1794409783.113 INFO  status: kernel 'python3' ready (/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3)
+1794409995.780 INFO  status: zoom — any key closes
+1794410166.757 INFO  status: cell split (u undoes)
+1794410212.311 INFO  jotter::kernel: kernelspec 'python3' from /Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3, argv ["/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"]
+1794410212.313 INFO  jotter::kernel: kernel spawned, pid Some(48907), connection file /Users/czyber/Library/Jupyter/runtime/jotter-799fce24-c88e-45e6-a8d5-8a7ebc85dbf4.json
+1794410212.318 INFO  jotter: terminal: graphics Kitty, font 14x25 px, keyboard protocol kitty
+1794410212.319 INFO  status: starting kernel 'python3'...
+1794410213.789 DEBUG zeromq::reconnect: Reconnect task started for endpoint: tcp://127.0.0.1:61417
+1794410213.790 INFO  status: kernel 'python3' ready (/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3)
+1794410215.776 INFO  status: autosave kept — the next autosave (after any change) replaces it
+1794410216.097 INFO  status: cell yanked (p pastes) · source on the clipboard
+1794410238.221 INFO  jotter::kernel: kernelspec 'python3' from /Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3, argv ["/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"]
+1794410238.222 INFO  jotter::kernel: kernel spawned, pid Some(49099), connection file /Users/czyber/Library/Jupyter/runtime/jotter-f253c445-414a-46ce-8ac9-db12a2132a8f.json
+1794410238.226 INFO  jotter: terminal: graphics Kitty, font 14x25 px, keyboard protocol kitty
+1794410238.226 INFO  status: starting kernel 'python3'...
+1794410239.692 DEBUG zeromq::reconnect: Reconnect task started for endpoint: tcp://127.0.0.1:61431
+1794410239.693 INFO  status: kernel 'python3' ready (/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3)

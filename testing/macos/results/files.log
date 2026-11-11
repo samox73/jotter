@@ -1,0 +1,15 @@
+1794410971.355 INFO  jotter::kernel: kernelspec 'python3' from /Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3, argv ["/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"]
+1794410971.357 INFO  jotter::kernel: kernel spawned, pid Some(54950), connection file /Users/czyber/Library/Jupyter/runtime/jotter-21839259-5598-4f2f-8651-7103cc9ca93a.json
+1794410971.361 INFO  jotter: terminal: graphics Kitty, font 14x25 px, keyboard protocol kitty
+1794410971.362 INFO  status: starting kernel 'python3'...
+1794410972.813 DEBUG zeromq::reconnect: Reconnect task started for endpoint: tcp://127.0.0.1:61587
+1794410972.816 INFO  status: kernel 'python3' ready (/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3)
+1794410979.214 INFO  status: saved my notes/ünïcode/tést.ipynb
+1794411015.344 INFO  jotter::kernel: kernelspec 'python3' from /Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3, argv ["/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"]
+1794411015.345 INFO  jotter::kernel: kernel spawned, pid Some(55295), connection file /Users/czyber/Library/Jupyter/runtime/jotter-e7dd6208-ac85-425a-9752-8b7a947aaa0a.json
+1794411015.355 INFO  jotter: terminal: graphics Kitty, font 14x25 px, keyboard protocol kitty
+1794411015.356 INFO  status: starting kernel 'python3'...
+1794411016.819 DEBUG zeromq::reconnect: Reconnect task started for endpoint: tcp://127.0.0.1:61617
+1794411016.819 INFO  status: kernel 'python3' ready (/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3)
+1794411020.036 INFO  status: Test.ipynb exists — :w! Test.ipynb overwrites
+1794411033.145 INFO  status: saved as Test.ipynb (kernel keeps its working directory)

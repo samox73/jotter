@@ -1,0 +1,13 @@
+1794411971.934 INFO  jotter::kernel: kernelspec 'python3' from /Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3, argv ["/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"]
+1794411971.935 INFO  jotter::kernel: kernel spawned, pid Some(59527), connection file /Users/czyber/Library/Jupyter/runtime/jotter-ea426f32-14c0-4822-afd4-fd166e2abb69.json
+1794411971.961 INFO  jotter: terminal: graphics Kitty, font 14x25 px, keyboard protocol kitty
+1794411971.961 INFO  status: starting kernel 'python3'...
+1794411976.728 INFO  status: kernel starting — 1 cell(s) queued
+1794411979.772 INFO  status: saved /Users/czyber/Library/Mobile Documents/com~apple~CloudDocs/jotter-icloud.ipynb
+1794412001.938 INFO  status: kernel 'python3' failed: iopub connect: Connect timed out after 30s — 1 queued run(s) dropped
+1794421968.683 INFO  status: starting kernel 'python3'...
+1794421968.684 INFO  jotter::kernel: kernelspec 'python3' from /Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3, argv ["/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"]
+1794421968.685 INFO  jotter::kernel: kernel spawned, pid Some(98519), connection file /Users/czyber/Library/Jupyter/runtime/jotter-2f422eda-a3e5-4103-a003-56ef0b33ef6e.json
+1794421970.169 DEBUG zeromq::reconnect: Reconnect task started for endpoint: tcp://127.0.0.1:62348
+1794421970.169 INFO  status: kernel 'python3' ready (/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3)
+1794421974.317 INFO  status: saved /Users/czyber/Library/Mobile Documents/com~apple~CloudDocs/jotter-icloud.ipynb

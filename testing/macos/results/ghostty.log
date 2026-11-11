@@ -1,0 +1,9 @@
+1794422247.145 INFO  jotter::kernel: kernelspec 'python3' from /Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3, argv ["/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"]
+1794422247.147 INFO  jotter::kernel: kernel spawned, pid Some(620), connection file /Users/czyber/Library/Jupyter/runtime/jotter-2cab4d2e-e748-48f5-9f9e-7e1138c82ab2.json
+1794422247.150 INFO  jotter: terminal: graphics Kitty, font 16x34 px, keyboard protocol kitty
+1794422247.150 INFO  status: starting kernel 'python3'...
+1794422248.652 DEBUG zeromq::reconnect: Reconnect task started for endpoint: tcp://127.0.0.1:62406
+1794422248.653 INFO  status: kernel 'python3' ready (/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/share/jupyter/kernels/python3)
+1794422303.123 INFO  status: cell split (u undoes)
+1794422316.889 INFO  status: zoom — any key closes
+1794422321.981 INFO  status: cell yanked (p pastes) · source on the clipboard
