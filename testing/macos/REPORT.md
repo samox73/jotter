@@ -3,6 +3,8 @@
 Tester: czyber (driven by Claude Code on czyber's Mac; see [How this was tested](#how-this-was-tested))
 Date: 2026-11-11
 
+> The full write-up with figures, severities and recommendations is in [`macOS-test-report.md`](macOS-test-report.md).
+
 | Field | Value |
 | --- | --- |
 | macOS version and chip | macOS 26.5.2 Tahoe (25F84), Apple M5, APFS (case-insensitive), zsh |
