@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Sets up jotter-test/ in this clone for testing/macos/PLAYBOOK.md.
+# Sets up jotter-test/ in this clone for testing/macos/template/PLAYBOOK.md, and a dated
+# folder under testing/macos/ for the report and results.
 # Download jotter-aarch64-macos.tar.gz with your browser first (not curl: the
 # browser sets the quarantine flag that the Gatekeeper step is about).
 set -euo pipefail
@@ -11,7 +12,8 @@ tarball=$HOME/Downloads/jotter-aarch64-macos.tar.gz
 [[ -f "$tarball" ]] || { echo "$tarball not found: download it with your browser from https://github.com/samox73/jotter/releases/latest"; exit 1; }
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-here=$root/testing/macos
+here=$root/testing/macos/template
+run=$root/testing/macos/$(date +%F)
 test=$root/jotter-test
 
 mkdir -p "$test/release" "$test/my notes/ünïcode"
@@ -20,6 +22,9 @@ tar xzf "$tarball" -C "$test/release"
 # didn't, set the same flag a browser would, so the Gatekeeper step still happens.
 xattr -p com.apple.quarantine "$test/release/jotter" >/dev/null 2>&1 \
   || xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");Safari;" "$test/release/jotter"
+
+mkdir -p "$run/results"
+[[ -f "$run/REPORT.md" ]] || cp "$here/REPORT.md" "$run/REPORT.md"
 
 cp "$here/test.ipynb" "$test/test.ipynb"
 cp "$here/test.ipynb" "$test/my notes/ünïcode/tést.ipynb"
@@ -34,3 +39,4 @@ autoload -Uz compinit && compinit
 ENV
 
 echo "ready: cd $test && ./release/jotter --version"
+echo "report and results go in $run"

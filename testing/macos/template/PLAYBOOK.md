@@ -1,6 +1,6 @@
 # jOtter macOS test playbook
 
-jOtter 0.6.0 ships a macOS build for Apple Silicon only, and nobody on the project has a Mac. This playbook covers the parts only a Mac can test: Gatekeeper, the install, macOS terminals, a kernel found through uv, and the filesystem. Plan on about 45 minutes. Everything happens inside your clone of the repository, in a folder called `jotter-test` that git ignores, and your results go into `testing/macos/REPORT.md` on this branch.
+jOtter 0.6.0 ships a macOS build for Apple Silicon only, and nobody on the project has a Mac. This playbook covers the parts only a Mac can test: Gatekeeper, the install, macOS terminals, a kernel found through uv, and the filesystem. Plan on about 45 minutes. Everything happens inside your clone of the repository, in a folder called `jotter-test` that git ignores, and your results go into a dated folder, `testing/macos/<today's date>/`, which the setup script creates.
 
 ## Before you start
 
@@ -13,7 +13,7 @@ You need:
 Each step says what to run, what should happen, and ends with a checklist. For every item, note pass or fail in `REPORT.md` with one line on what you saw; "image was garbled at the bottom" is plenty. When something misbehaves, run it again with a log, reproduce it, quit, and the log is already where it belongs:
 
 ```sh
-jotter --log ../testing/macos/results/kitty.log test.ipynb    # name the log after the terminal
+jotter --log ../testing/macos/$(date +%F)/results/kitty.log test.ipynb    # name the log after the terminal
 ```
 
 Screenshot anything visual into the same folder. Inside jOtter, `?` shows every key, `:q` quits, `:q!` quits without saving, and `Ctrl+c` interrupts the kernel.
@@ -21,15 +21,15 @@ Screenshot anything visual into the same folder. Inside jOtter, `?` shows every 
 ## Step 1: Clone and set up
 
 1. Download `jotter-aarch64-macos.tar.gz` from the [latest release](https://github.com/samox73/jotter/releases/latest) with your browser and leave it in `~/Downloads`. The browser matters: it marks the download with the quarantine flag that triggers Gatekeeper, and curl doesn't.
-2. Clone the repository on the `macos-test` branch and run the setup script:
+2. Clone the repository and run the setup script:
 
 ```sh
-git clone -b macos-test https://github.com/samox73/jotter.git
+git clone https://github.com/samox73/jotter.git
 cd jotter
-bash testing/macos/setup.sh
+bash testing/macos/template/setup.sh
 ```
 
-The script refuses to run on anything but an Apple Silicon Mac. It creates `jotter-test/` with the unpacked release in `release/`, a virtual environment in `.venv` with ipykernel, numpy, matplotlib, sympy and pandas, the test notebook as `test.ipynb`, a copy of it under an awkward path for step 5, and `env.zsh`, which puts the release binary and its zsh completions on your PATH for one terminal session.
+The script refuses to run on anything but an Apple Silicon Mac. It creates `jotter-test/` with the unpacked release in `release/`, a virtual environment in `.venv` with ipykernel, numpy, matplotlib, sympy and pandas, the test notebook as `test.ipynb`, a copy of it under an awkward path for step 5, and `env.zsh`, which puts the release binary and its zsh completions on your PATH for one terminal session. It also creates `testing/macos/<today's date>/` with an empty `REPORT.md` and a `results/` folder.
 
 Check:
 
@@ -47,8 +47,8 @@ cd jotter-test
 ./release/jotter --version
 ```
 
-2. macOS should block it. Write down the exact wording of the dialog. Then get past it one of two ways, and note which:
-    - System Settings, Privacy & Security, scroll down to "jotter was blocked", Open Anyway, then run the command again.
+2. macOS should block it. Write down the exact wording of the dialog. Careful: its default button is **Move to Trash**, which deletes the binary. Click **Done** instead. Then get past it one of two ways, and note which:
+    - System Settings, Privacy & Security, scroll down to "jotter was blocked", Open Anyway, then run the command again. A second dialog appears, again with Move to Trash as the default: click **Open Anyway**.
     - Or remove the flag: `xattr -d com.apple.quarantine release/jotter`.
 3. Load the test environment and check the completions and the man page. Repeat the `source` line in every new terminal window you open for this playbook.
 
@@ -77,7 +77,7 @@ Check:
 
 `test.ipynb` runs in a few seconds and produces every kind of output jOtter renders. It also checks that jOtter finds the kernel in the `.venv` next to the notebook without you activating anything.
 
-Run `jotter test.ipynb`, then press `X` to run every cell. The status line briefly says `starting kernel`. Cell 13 asks for input: type anything and press Enter. Cell 14 raises an error on purpose, and run-all stops there. Afterwards walk through the cells with `j` and `k` and compare with the table. `[` and `]` scroll inside a long output; `zi` zooms an image and any key returns.
+Run `jotter test.ipynb`, then press `X` to run every cell. The status line briefly says that the kernel is starting. Cell 13 asks for input in a popup: type anything and press Enter. Cell 14 raises an error on purpose, and run-all stops there. Afterwards walk through the cells with `j` and `k` and compare with the table. `[` and `]` scroll inside a long output; `zi` zooms an image and any key returns.
 
 | Cell | What it does | Expected |
 | --- | --- | --- |
@@ -93,7 +93,7 @@ Run `jotter test.ipynb`, then press `X` to run every cell. The status line brief
 | 10 | A markdown output | Bold text, a link, drawn math |
 | 11 | A hundred lines | Shown as a viewport; `[` and `]` scroll it |
 | 12 | stdout and stderr | Both lines show, stderr marked differently |
-| 13 | `input()` | The prompt appears in the status line, your answer is echoed back |
+| 13 | `input()` | The prompt appears in a centred popup, your answer is echoed back |
 | 14 | An exception | A coloured traceback, and no cell after it runs |
 
 Check:
@@ -108,9 +108,9 @@ Run the same five-minute script in every terminal you can. Terminal.app is the f
 
 | Terminal | Install | Images | Shift+Enter and Ctrl+Enter | `yy` to clipboard |
 | --- | --- | --- | --- | --- |
-| Terminal.app | built in | coarse half-block image | no: use `r` and `Space` | no, Terminal.app has no OSC 52 |
+| Terminal.app | built in | coarse half-block image | no: use `r` and `Space`. Shift+Enter opens the cell editor; Ctrl+Enter opens Terminal's own New Tab menu, `Esc` closes it | no, Terminal.app has no OSC 52 |
 | kitty | `brew install --cask kitty` | sharp | yes | yes, may ask once |
-| Ghostty | `brew install --cask ghostty` | sharp | yes | yes, asks the first time |
+| Ghostty | `brew install --cask ghostty` | sharp | yes | yes |
 | iTerm2 | `brew install --cask iterm2` | sharp | 3.5 and newer: should work; older: `r` and `Space` | after enabling Settings, General, Selection, "Applications in terminal may access clipboard" |
 | WezTerm | `brew install --cask wezterm` | sharp | only with `enable_kitty_keyboard = true` in `~/.wezterm.lua` | yes |
 | Alacritty | `brew install --cask alacritty` | coarse half-block image | yes | yes |
@@ -149,7 +149,7 @@ jotter "my notes/ünïcode/tést.ipynb"
 
 Run cell 2 with `Space`, press `w`, then `:q`. `ls -l "my notes/ünïcode/"` should show the file modified just now.
 
-2. Case folding. Open `jotter test.ipynb` and type `:w Test.ipynb`. On APFS that is the same file, so jOtter should treat it as overwriting an existing file and ask for a second Enter. Then `:q` and `ls`: still one test notebook, whichever spelling.
+2. Case folding. Open `jotter test.ipynb` and type `:w Test.ipynb`. On APFS that is the same file, so jOtter should refuse with `Test.ipynb exists — :w! Test.ipynb overwrites`. Type `:w! Test.ipynb` to overwrite. Then `:q` and `ls`: still one test notebook, whichever spelling.
 3. iCloud Drive, only if you use it:
 
 ```sh
@@ -157,25 +157,26 @@ cp test.ipynb "$HOME/Library/Mobile Documents/com~apple~CloudDocs/jotter-icloud.
 jotter "$HOME/Library/Mobile Documents/com~apple~CloudDocs/jotter-icloud.ipynb"
 ```
 
-Run cell 2, `w`, wait a minute while iCloud syncs, run it again, `w`. Neither save should trip a warning about the file having changed on disk.
+Run cell 2, `w`, wait a minute while iCloud syncs, run it again, `w`. Neither save should trip a warning about the file having changed on disk. The first time, macOS may ask whether your terminal may access files in iCloud Drive, and the kernel waits until you answer: click Allow, and press `R` to restart the kernel if it has already timed out.
 
 Check:
 
 - [ ] The spaced, accented path opens, runs and saves.
-- [ ] `:w Test.ipynb` asks before overwriting and leaves one file behind.
+- [ ] `:w Test.ipynb` refuses, `:w! Test.ipynb` saves, and one file is left behind.
 - [ ] iCloud: both saves stick, no spurious warning.
 
 ## Step 6: Submit your results
 
-1. Fill in `testing/macos/REPORT.md`.
-2. Put logs and screenshots in `testing/macos/results/`.
-3. Commit and push to this branch:
+1. Fill in `REPORT.md` in your dated folder under `testing/macos/`.
+2. Put logs and screenshots in its `results/` folder.
+3. Commit to a new branch, push it, and open a pull request against `main`:
 
 ```sh
 cd ..    # back to the repository root
-git add testing/macos/REPORT.md testing/macos/results
+git switch -c macos-test-$(date +%F)
+git add testing/macos
 git commit -m "macOS test results"
-git push
+git push -u origin HEAD
 ```
 
-If you can't push, fork the repository, push there, and open a pull request against the `macos-test` branch.
+If you can't push, fork the repository and push there.

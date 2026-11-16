@@ -3,12 +3,12 @@
 | | |
 | --- | --- |
 | **Product** | jOtter 0.6.0, release binary `jotter-aarch64-macos.tar.gz` and PyPI `jotter-tui` |
-| **Branch tested** | `macos-test` at `8d6f612` (playbook in `testing/macos/PLAYBOOK.md`) |
+| **Branch tested** | `macos-test` at `8d6f612`. The playbook, setup script and test notebook used here now live in [`../template/`](../template/), where F-13 and F-14 have since been fixed. |
 | **Platform** | macOS 26.5.2 Tahoe (25F84), Apple M5, APFS case-insensitive, zsh |
 | **Terminals** | kitty 0.50.0 · Terminal.app 2.15 (470.2) · Ghostty 1.3.1 |
 | **Date** | 2026-11-11 |
 | **Tester** | czyber, with Claude Code automation ([method](#4-method)) |
-| **Playbook form** | [`REPORT.md`](REPORT.md) (filled in) · raw evidence in [`results/`](results/) |
+| **Evidence** | Logs and screenshots in [`results/`](results/), indexed in [Appendix A](#appendix-a-evidence-index) |
 
 ---
 
@@ -26,7 +26,7 @@ The issues are at the edges, where macOS behaves differently from Linux:
 | --- | :---: | --- |
 | High | 2 | [F-01](#f-01-gatekeepers-default-button-deletes-the-binary) Gatekeeper, [F-02](#f-02-kernel-hangs-on-a-privacy-dialog-for-notebooks-in-icloud-drive) iCloud kernel |
 | Medium | 5 | [F-03](#f-03-math-is-unreadable-in-half-block-terminals) math in half-blocks, [F-04](#f-04-ctrlenter-never-reaches-jotter-in-terminalapp) Ctrl+Enter in Terminal.app, [F-05](#f-05-yy-reports-success-without-a-clipboard-in-terminalapp) `yy` in Terminal.app, [F-06](#f-06-zi-never-enlarges-plots-are-half-size-on-retina) `zi` and Retina, [F-07](#f-07-ctrl-on-germanaustrian-layouts-inserts-a-7) Ctrl+\ on German layouts |
-| Low | 6 | [F-08](#f-08-torn-frames-while-scrolling-in-terminalapp) to [F-13](#f-13-test-notebook-is-not-in-canonical-nbformat) |
+| Low | 8 | [F-08](#f-08-torn-frames-while-scrolling-in-terminalapp) to [F-13](#f-13-test-notebook-is-not-in-canonical-nbformat), [F-15](#f-15-plot-keeps-a-white-frame-on-dark-themes) plot frame, [F-16](#f-16-long-outputs-scroll-one-line-per-press) output scrolling |
 | Docs | 1 | [F-14](#f-14-playbook-statements-that-no-longer-match) playbook drift |
 
 *Severity: **High**: a typical first-time Mac user is blocked or loses their setup. **Medium**: wrong or misleading behaviour with a workaround. **Low**: cosmetic or minor.*
@@ -39,11 +39,13 @@ The issues are at the edges, where macOS behaves differently from Linux:
 | --- | --- |
 | Hardware | Apple M5 (arm64) |
 | OS | macOS 26.5.2 (25F84), Gatekeeper set to *App Store & Known Developers* |
+| jOtter | `jotter --version` prints `jotter 0.6.0`, both from the release tarball and from `uvx --from jotter-tui` |
 | Python | uv 0.13.6; `setup.sh` created `.venv` with Python 3.14.10, ipykernel, numpy, matplotlib, sympy, pandas |
+| Cell 2 output | `/Users/czyber/.t3/scratch/2026-11-11-check-out-this-branch-of-3b014a3f/jotter/jotter-test/.venv/bin/python`<br>`macOS 26.5.2 arm64` |
 | Keyboard | ABC (US) layout; Austrian layout for the [F-07](#f-07-ctrl-on-germanaustrian-layouts-inserts-a-7) check |
 | iCloud | iCloud Drive enabled, storage quota full (uploads fail, see step 5.3) |
 | Tested terminals | kitty 0.50.0 (Homebrew cask, default config), Terminal.app 2.15 (profile "Clear Dark"), Ghostty 1.3.1 (default config) |
-| Not tested | iTerm2, WezTerm, Alacritty, Warp, tmux |
+| Not tested | iTerm2, WezTerm, Alacritty, Warp, tmux (not installed) |
 
 ---
 
@@ -53,17 +55,18 @@ The issues are at the edges, where macOS behaves differently from Linux:
 
 | Step | Result | Summary |
 | --- | :---: | --- |
-| 1 Clone and set up | ✅ Pass | Chrome download (quarantined), SHA256 verified, `setup.sh` finished with `ready` in 2.5 s. macOS `tar` copied the quarantine flag to the extracted binary itself, so the script's fallback never ran. |
-| 2 Gatekeeper and install | ✅ Pass | Blocked on the first run as intended; bypassed via Open Anyway. Completions, man page and `uvx` all work. See [F-01](#f-01-gatekeepers-default-button-deletes-the-binary), [F-11](#f-11-shell-completions-list-the-hidden---generate). |
-| 3 Test notebook | ✅ Pass | All 14 cells behave as the playbook says, apart from cell 12 ([F-09](#f-09-stderr-looks-the-same-as-stdout)) and the cell 13 prompt location ([F-14](#f-14-playbook-statements-that-no-longer-match)). |
+| 1 Clone and set up | ✅ Pass | Chrome download (quarantined), SHA256 verified, `setup.sh` finished with `ready` in 2.5 s. macOS `tar` copied the quarantine flag to the extracted binary itself, so the script's fallback never ran. `jotter-test` has `release`, `.venv`, `test.ipynb`, `env.zsh` and `my notes/`. |
+| 2 Gatekeeper and install | ✅ Pass | Blocked on the first run as intended; bypassed via Open Anyway. After `source env.zsh`, `jotter --version` works, the man page opens, and Tab after `jotter --` offers `--kernel`, `--log` and `--no-images`, but also the hidden `--generate`. `uvx --from jotter-tui jotter --version` prints `jotter 0.6.0` with no Gatekeeper prompt. See [F-01](#f-01-gatekeepers-default-button-deletes-the-binary), [F-11](#f-11-shell-completions-list-the-hidden---generate). |
+| 3 Test notebook | ✅ Pass | Run in kitty. All 14 cells behave as the playbook says, apart from cell 12 ([F-09](#f-09-stderr-looks-the-same-as-stdout)) and the cell 13 prompt location ([F-14](#f-14-playbook-statements-that-no-longer-match)). No separate matplotlib window and no stray Python app. Cosmetic notes on cells 4 and 11: [F-15](#f-15-plot-keeps-a-white-frame-on-dark-themes), [F-16](#f-16-long-outputs-scroll-one-line-per-press). |
 | 4 Terminals | ⚠️ Pass with findings | kitty and Ghostty: clean. Terminal.app: expected fallbacks plus [F-03](#f-03-math-is-unreadable-in-half-block-terminals), [F-04](#f-04-ctrlenter-never-reaches-jotter-in-terminalapp), [F-05](#f-05-yy-reports-success-without-a-clipboard-in-terminalapp), [F-08](#f-08-torn-frames-while-scrolling-in-terminalapp). |
-| 5 Files on a Mac | ⚠️ Pass with findings | NFC/NFD paths and case-folding are correct; iCloud saves stick, but see [F-02](#f-02-kernel-hangs-on-a-privacy-dialog-for-notebooks-in-icloud-drive). |
+| 5 Files on a Mac | ⚠️ Pass with findings | 5.1: the spaced, accented path opens, runs and saves, typed (NFC) and in the form Finder drag-and-drop gives (NFD); still one file, and the name stays NFC. 5.2: `:w Test.ipynb` refuses with `Test.ipynb exists — :w! Test.ipynb overwrites`; a plain second Enter doesn't confirm (it opens the cell editor), `:w!` does; one file is left, still spelled `test.ipynb`. 5.3: iCloud saves stick, but see [F-02](#f-02-kernel-hangs-on-a-privacy-dialog-for-notebooks-in-icloud-drive). |
 
 ### 3.2 Terminal matrix
 
 | Check | kitty 0.50.0 | Ghostty 1.3.1 | Terminal.app 2.15 |
 | --- | --- | --- | --- |
 | Graphics detected | kitty, 14×25 px cells | kitty, 16×34 px cells | half-blocks, "7×15 px" (points) |
+| Keyboard protocol detected | kitty | kitty | legacy |
 | Plots | ✅ sharp | ✅ sharp | ✅ blocky (expected) |
 | Math | ✅ sharp | ✅ sharp | ❌ unreadable ([F-03](#f-03-math-is-unreadable-in-half-block-terminals)) |
 | Shift+Enter | ✅ runs, moves down | ✅ runs, moves down | ⚪ opens the cell editor (expected) |
@@ -71,7 +74,7 @@ The issues are at the edges, where macOS behaves differently from Linux:
 | `r` / `Space` | ✅ | ✅ | ✅ |
 | `yy` → clipboard | ✅ no prompt | ✅ no prompt | ⚪ nothing copied (expected), ❌ but reported as copied ([F-05](#f-05-yy-reports-success-without-a-clipboard-in-terminalapp)) |
 | Ctrl+\ split (ABC layout) | ✅ | ✅ | ✅ (arrives as Ctrl+4) |
-| `zi` zoom | ⚠️ not enlarged ([F-06](#f-06-zi-never-enlarges-plots-are-half-size-on-retina)) | ⚠️ not enlarged | ⚠️ slightly enlarged |
+| `zi` zoom | ⚠️ not enlarged ([F-06](#f-06-zi-never-enlarges-plots-are-half-size-on-retina)) | ⚠️ not enlarged | ⚠️ only a little larger (native size) |
 | Resize, fullscreen | ✅ | ✅ | ✅ |
 | Holding j/k | ✅ clean | ✅ clean | ⚠️ transient torn frames ([F-08](#f-08-torn-frames-while-scrolling-in-terminalapp)) |
 | After quit | ✅ prompt, no leftovers, selection works | ✅ | ✅ |
@@ -89,6 +92,8 @@ The issues are at the edges, where macOS behaves differently from Linux:
 | Cell size, `CSI 16t` | 14×25 | no reply |
 | Background, `OSC 11` | `rgb:0000/0000/0000` | `rgb:213d/2743/33e7` |
 
+Terminal.app answers `CSI 14t` in points (1280×857 for a 180×56 window on Retina) and doesn't answer `CSI 16t`, which is where the logged `font 7x15 px` comes from. That is harmless for half-blocks.
+
 ### 3.4 Rendering in the three terminals
 
 kitty and Ghostty draw the test notebook exactly as intended. In Terminal.app plots fall back to coarse but recognisable half-blocks.
@@ -102,7 +107,8 @@ kitty and Ghostty draw the test notebook exactly as intended. In Terminal.app pl
 ## 4. Method
 
 - **Real input.** Keys were sent as macOS key events through System Events, so each terminal applied its own key encoding exactly as for typed keys. Mouse selection used real CGEvent drags.
-- **Observation.** Each check was confirmed with a screenshot of that terminal's window. Screen text came from kitty's remote control for kitty and from Apple's Vision OCR for Terminal.app and Ghostty. Terminal capabilities were queried with escape sequences (§3.3).
+- **Automation.** Claude Code drove the terminals on czyber's Mac. czyber granted kitty Accessibility and Screen Recording for the run.
+- **Observation.** Each check was confirmed with a screenshot of that terminal's window (`screencapture -l`). Screen text came from kitty's remote control for kitty and from Apple's Vision OCR for Terminal.app and Ghostty. Terminal capabilities were queried with escape sequences (§3.3).
 - **Security prompts.** The tester answered the Gatekeeper and privacy dialogs by hand. Every prompt is recorded as it appeared.
 - **Holding a key** was simulated as about 30 keystrokes per second, roughly macOS key-repeat speed, with screenshots during the scroll. Flicker a human would notice between captured frames can't be ruled out.
 - **Logs** for each session: `results/{kitty,terminal-app,ghostty,files,icloud}.log`.
@@ -117,7 +123,7 @@ kitty and Ghostty draw the test notebook exactly as intended. In Terminal.app pl
 | --- | --- | --- |
 | **High** | Install | Everyone installing from the GitHub tarball |
 
-**Observed.** The first run of the quarantined binary is killed (`zsh: killed ./release/jotter --version`, exit 137), and macOS shows *"jotter" Not Opened*. Its highlighted default button is **Move to Trash**. On the first attempt a click on it deleted the binary. After Open Anyway in System Settings › Privacy & Security, which needs Touch ID or a password, the next run shows a second dialog, *Open "jotter"?*. **Move to Trash** is again the default there; **Open Anyway** is the middle button. After Open Anyway the waiting process continued and printed `jotter 0.6.0`, and the quarantine flag changed from `0281` to `02c1`.
+**Observed.** The first run of the quarantined binary is killed (`zsh: killed ./release/jotter --version`, exit 137), and macOS shows *"jotter" Not Opened*: *Apple could not verify "jotter" is free of malware that may harm your Mac or compromise your privacy.* The buttons are **Move to Trash** and **Done**, and the highlighted default is **Move to Trash**. On the first attempt a click on it deleted the binary; Enter would do the same. After Open Anyway in System Settings › Privacy & Security, which needs Touch ID or a password, the next run shows a second dialog, *Open "jotter"?* (*…Don't open this unless you are certain it is from a trustworthy source.*). **Move to Trash** is again the default there; **Open Anyway** is the middle button. After Open Anyway the waiting process continued and printed `jotter 0.6.0`, and the quarantine flag changed from `0281` to `02c1`.
 
 ![Gatekeeper dialogs on macOS 26: first run, then after Open Anyway](results/fig-01-gatekeeper-flow.png)
 
@@ -126,7 +132,7 @@ kitty and Ghostty draw the test notebook exactly as intended. In Terminal.app pl
 **Recommendation.**
 1. *Docs, now:* spell out the path on the install page: **Done** (not Move to Trash) → System Settings › Privacy & Security › **Open Anyway** → run again → **Open Anyway**.
 2. *Docs, now:* point Mac users at `uv tool install jotter-tui`. Installs through uv aren't quarantined; `uvx` showed no Gatekeeper prompt in this test.
-3. *Later:* a Homebrew tap (formula installs aren't quarantined) or Developer ID signing plus notarization removes the problem entirely. The binary is currently ad-hoc linker-signed; `spctl` rejects it and `syspolicy_check` reports *Notary Ticket Missing*.
+3. *Later:* a Homebrew tap (`brew install samox73/tap/jotter`; formula installs aren't quarantined) or Developer ID signing plus notarization ($99/year) removes the problem entirely. The binary is currently ad-hoc linker-signed; `spctl` rejects it and `syspolicy_check` reports *Notary Ticket Missing*.
 
 ---
 
@@ -134,7 +140,7 @@ kitty and Ghostty draw the test notebook exactly as intended. In Terminal.app pl
 
 | Severity | Area | Affects |
 | --- | --- | --- |
-| **High** | Kernel start | Notebooks in iCloud Drive; likely also Desktop/Documents when synced with iCloud (not tested) |
+| **High** | Kernel start | Notebooks in iCloud Drive; possibly also other protected folders (Desktop, Documents, Downloads) in a terminal that hasn't been granted access yet (not tested) |
 
 **Observed.** Opening `~/Library/Mobile Documents/com~apple~CloudDocs/jotter-icloud.ipynb` (venv activated) started the kernel, and macOS asked *"kitty" wants to access files managed by "iCloud Drive"*. jOtter's own read and save worked while the dialog was open; the kernel's start, with its working directory in iCloud Drive, is what triggered it. jOtter showed only:
 
@@ -207,7 +213,7 @@ Nothing points to the dialog. After **Allow**, `R` started a kernel immediately.
 | --- | --- | --- |
 | **Medium** | Images | All terminals; most visible on Retina displays |
 
-**Observed.** `zoom_image` (`src/ui.rs:885`) only shrinks images that are larger than the screen. A default matplotlib figure (100 dpi, 600×400 px) is smaller, so `zi` shows it at its inline size in the middle of an empty screen. On Retina, kitty reports cells in device pixels (14×25), so a 600 px figure covers 300 points: about a quarter of the area the same figure gets in browser Jupyter.
+**Observed.** `zoom_image` (`src/ui.rs:885`) only shrinks images that are larger than the screen. A default matplotlib figure (100 dpi, 600×400 px) is smaller, so `zi` shows it at its inline size in the middle of an empty screen. On Retina, kitty reports cells in device pixels (14×25), so a 600 px figure covers 300 points (cell 3's 600×300 px plot covers 300×150 points): about a quarter of the area the same figure gets in browser Jupyter. In Terminal.app `zi` shows the image only a little larger, at its native size (`results/10-terminal-app-zi.jpg`).
 
 ![zi in kitty: the image stays at its inline size](results/04-kitty-zi-does-not-enlarge.jpg)
 
@@ -230,7 +236,7 @@ before:  print(sys.executable)          cursor after "print("
 after:   print(7sys.executable)         no split
 ```
 
-The event evidently arrives as Ctrl+Alt+Shift+`7`. The split binding (`src/app.rs:1215`) matches only `\` and `4`, and the editor then inserts the bare character with its modifiers dropped. **Ctrl+4 splits correctly** in kitty, and in Terminal.app Ctrl+Shift+Option+7 splits correctly.
+The event evidently arrives as Ctrl+Alt+Shift+`7`. The split binding (`src/app.rs:1215`) matches only `\` and `4`, and the editor then inserts the bare character with its modifiers dropped. **Ctrl+4 splits correctly** in kitty, and in Terminal.app Ctrl+Shift+Option+7 splits correctly. Ghostty wasn't tested with this layout.
 
 **Recommendation.** Document Ctrl+4 as the split key that works on every layout; today it's mentioned only for tmux. Don't insert a character for key events that carry Ctrl or Alt.
 
@@ -242,7 +248,7 @@ The event evidently arrives as Ctrl+Alt+Shift+`7`. The split binding (`src/app.r
 | --- | --- | --- |
 | **Low** | Rendering | Terminal.app |
 
-**Observed.** Terminal.app doesn't support synchronized output (no reply to `DECRQM ?2026`), and half-block frames are large, so half-painted frames stay visible while j/k is held. 4 of 14 mid-scroll screenshots caught one: stale lines below new ones, a plot squashed to half height, a Mandelbrot stitched from two frames. It's transient: stepping one cell at a time with 1.2 s settle time gave **26 of 26 correct frames**, including images clipped at the screen edges. kitty and Ghostty showed nothing similar.
+**Observed.** Terminal.app doesn't support synchronized output (no reply to `DECRQM ?2026`), and half-block frames are large, so half-painted frames stay visible while j/k is held. 4 of 14 mid-scroll screenshots (windowed and fullscreen) caught one: stale lines below new ones, a plot squashed to half height, a Mandelbrot stitched from two frames. It's transient: stepping one cell at a time with 1.2 s settle time gave **26 of 26 correct frames**, including images clipped at the screen edges. kitty and Ghostty showed nothing similar.
 
 ![Torn frame next to the settled frame at the same position](results/fig-04-torn-vs-settled.jpg)
 
@@ -274,7 +280,7 @@ The event evidently arrives as Ctrl+Alt+Shift+`7`. The split binding (`src/app.r
 
 ### F-13 Test notebook is not in canonical nbformat
 
-**Low · Test assets.** `testing/macos/test.ipynb` stores each `source` as a single string. The first save rewrites every cell into Jupyter's list-of-lines form, the same as Jupyter would, so every tester who saves it gets a large diff. *Recommendation:* commit the notebook as jOtter saves it.
+**Low · Test assets.** The test notebook (`testing/macos/test.ipynb` at the tested commit) stores each `source` as a single string. The first save rewrites every cell into Jupyter's list-of-lines form, the same as Jupyter would, so every tester who saves it gets a large diff. *Recommendation:* commit the notebook as jOtter saves it.
 
 ### F-14 Playbook statements that no longer match
 
@@ -287,6 +293,14 @@ The event evidently arrives as Ctrl+Alt+Shift+`7`. The split binding (`src/app.r
 | 5.2: then `:q` | With the cell editor open, `:q` only closes the editor (vim-style), so jOtter keeps running |
 | Ghostty `yy`: "asks the first time" | Ghostty 1.3.1 with default config copies without asking |
 | Terminal.app: Shift/Ctrl+Enter "no: use r and Space" | True; add that Ctrl+Enter opens Terminal's tab menu ([F-04](#f-04-ctrlenter-never-reaches-jotter-in-terminalapp)) |
+
+### F-15 Plot keeps a white frame on dark themes
+
+**Low · Rendering.** Cell 4's Mandelbrot is a complete, smooth viridis gradient, but it sits in a white frame on dark themes: the recolouring skips it because the white margin is small. Cosmetic.
+
+### F-16 Long outputs scroll one line per press
+
+**Low · Navigation.** In cell 11 the viewport and `[` `]` work, but they move one line per press: 85 presses from the bottom to the top of the 100-line output. *Recommendation:* half-page scrolling (Ctrl+d / Ctrl+u), or a count before `[` / `]`.
 
 ---
 
@@ -311,7 +325,7 @@ The event evidently arrives as Ctrl+Alt+Shift+`7`. The split binding (`src/app.r
 | 4 | Document Terminal.app keys and Ctrl+4; don't insert characters for Ctrl/Alt events | F-04, F-07 | Docs + small |
 | 5 | Math as text in half-block mode; background colour for math images | F-03 | Medium |
 | 6 | `zi` upscaling; Retina-aware figure DPI | F-06 | Medium |
-| 7 | stderr style, half-block transparency, hidden completions, recovery count | F-09 – F-12 | Small each |
+| 7 | stderr style, half-block transparency, hidden completions, recovery count, half-page output scrolling | F-09 – F-12, F-16 | Small each |
 | 8 | Update playbook text; commit `test.ipynb` in saved form | F-13, F-14 | Docs |
 | 9 | Frame coalescing on terminals without mode 2026 | F-08 | Medium |
 | 10 | Homebrew tap or notarized releases | F-01 | Project decision |
