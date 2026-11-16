@@ -18,7 +18,7 @@ For that name, jOtter searches these places and uses the first match:
 <Steps>
 
 1. The **activated environment**: `$VIRTUAL_ENV` (venv, uv, poetry, pdm) or `$CONDA_PREFIX` (conda, mamba, pixi).
-2. A **`.venv` or `venv` directory next to the notebook**, even if it isn't activated.
+2. A **project virtualenv**, even if it isn't activated: jOtter starts in the notebook's directory and walks up the directory tree, checking each level for a `.venv` or `venv` directory. The nearest one wins, so a `.venv` next to the notebook takes precedence over one at the project root.
 3. The **global Jupyter paths**: `$JUPYTER_PATH`, the standard system and user directories, and whatever `jupyter --paths` reports if Jupyter is installed.
 
 </Steps>
@@ -27,18 +27,39 @@ If the requested name isn't found anywhere, jOtter repeats the search for `pytho
 
 Kernels from an environment (steps 1 and 2) run with that environment's own Python, so `import` sees exactly the packages installed there. The kernel's working directory is the notebook's directory, so relative paths in your code behave as they do in JupyterLab.
 
-<Aside type="tip">
-In practice: put a virtualenv with `ipykernel` next to your notebook, or activate one before starting jOtter, and it just works.
+### Recommended setup: one virtualenv per project
+
+Keep a single `.venv` with `ipykernel` at the project root, next to `pyproject.toml`, and put notebooks wherever they belong in the tree:
+
+```
+my-project/
+├── .venv/              # ipykernel + your dependencies
+├── pyproject.toml
+├── src/
+└── notebooks/
+    └── analysis.ipynb  # finds ../.venv on its own
+```
+
+Every notebook in the project then runs against the same packages as the rest of your code. Nothing needs activating, and it doesn't matter which directory you start jOtter from: the search begins at the notebook, not at your shell's working directory.
+
+This is the layout `uv` and `pdm` create by default. Reach for the alternatives only when you need them:
+
+- A notebook that needs **different packages** gets its own `.venv` in its directory, which shadows the project one.
+- To use an environment that lives **outside the project tree** (conda, a shared venv), activate it before starting jOtter. An activated environment always beats a `.venv` found by walking up.
+- A kernel shared **across projects** is best registered as a [named kernel](#named-kernels).
+
+<Aside type="caution">
+The walk doesn't stop at the project root. If no `.venv` is found inside the project, one further up (for example a stray `~/.venv`) is used before the global kernels.
 </Aside>
 
 ## Set up a Python kernel
 
-Install `ipykernel` into the environment your notebook should use:
+Install `ipykernel` into the environment your notebook should use. Run these from the project root:
 
 <Tabs syncKey="pyenv">
   <TabItem label="uv">
     ```sh
-    uv venv                      # creates .venv next to your notebook
+    uv venv                      # creates .venv in the current directory
     uv pip install ipykernel numpy matplotlib
     jotter notebook.ipynb        # finds .venv on its own
     ```

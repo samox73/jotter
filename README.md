@@ -27,9 +27,9 @@ Open, edit and run real `.ipynb` notebooks in your terminal, with vim keys, inli
 ## Install
 
 ```sh
-cargo install jotter-tui --locked                 # crates.io (the binary is `jotter`)
+cargo install jotter-tui --locked                # crates.io (the binary is `jotter`)
 nix run github:samox73/jotter -- notebook.ipynb  # Nix
-uv tool install jotter-tui                        # PyPI
+uv tool install jotter-tui                       # PyPI
 ```
 
 Every [release](https://github.com/samox73/jotter/releases) has `.deb`, `.rpm` and `.apk` packages and a static binary for any Linux distribution; the [installation guide](https://samox73.github.io/jotter/getting-started/installation/) covers them all. To run code you need a Jupyter kernel, such as `pip install ipykernel` in your project's environment.

@@ -81,24 +81,31 @@ pub struct Kernel {
     connection_file: PathBuf,
 }
 
+/// `share/jupyter` of every `.venv`/`venv` from the notebook's directory
+/// upwards, nearest first (existing or not).
+fn project_venv_dirs(notebook_dir: &std::path::Path) -> impl Iterator<Item = PathBuf> + '_ {
+    notebook_dir.ancestors().flat_map(|dir| {
+        [".venv", "venv"]
+            .iter()
+            .map(move |v| dir.join(v).join("share/jupyter"))
+    })
+}
+
 /// Kernelspec resolution ladder. For each candidate name (`requested`, then
-/// `python3`): project venv kernels next to the notebook first, then global
+/// `python3`): project venv kernels at or above the notebook first, then global
 /// dirs (JUPYTER_PATH, standard paths, `jupyter --paths` when available).
 async fn resolve_kernelspec(
     requested: &str,
     notebook_dir: &std::path::Path,
 ) -> Result<jupyter_zmq_client::KernelspecDir> {
     // Activated env first ($VIRTUAL_ENV: uv/poetry/pdm/venv; $CONDA_PREFIX:
-    // conda/mamba/pixi), then .venv/venv next to the notebook.
+    // conda/mamba/pixi), then .venv/venv next to the notebook or in the
+    // nearest parent directory (project root above a notebooks/ subdir).
     let venv_dirs: Vec<PathBuf> = ["VIRTUAL_ENV", "CONDA_PREFIX"]
         .iter()
         .filter_map(std::env::var_os)
         .map(|p| PathBuf::from(p).join("share/jupyter"))
-        .chain(
-            [".venv", "venv"]
-                .iter()
-                .map(|v| notebook_dir.join(v).join("share/jupyter")),
-        )
+        .chain(project_venv_dirs(notebook_dir))
         .filter(|d| d.is_dir())
         .collect();
     let mut candidates = vec![requested.to_string()];
@@ -617,6 +624,20 @@ fn nb_output<T: Serialize>(parent: String, ty: &str, x: T) -> Option<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_venv_dirs_walk_up_nearest_first() {
+        let dirs: Vec<_> = project_venv_dirs(std::path::Path::new("/repo/notebooks")).collect();
+        let want = [
+            "/repo/notebooks/.venv/share/jupyter",
+            "/repo/notebooks/venv/share/jupyter",
+            "/repo/.venv/share/jupyter",
+            "/repo/venv/share/jupyter",
+            "/.venv/share/jupyter",
+            "/venv/share/jupyter",
+        ];
+        assert_eq!(dirs, want.map(PathBuf::from));
+    }
 
     /// End-to-end against a real python kernel. Ignored by default because it
     /// needs ipykernel installed; run with `cargo test -- --ignored`.
