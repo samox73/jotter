@@ -114,11 +114,29 @@ jotter --kernel phys notebook.ipynb
 
 Install the language's Jupyter kernel and register it, then open the notebook as usual. Syntax highlighting and the file type used by the [external editor](/jotter/guides/external-editor/) follow the notebook's language (`metadata.language_info`, or the kernelspec's language), not just Python.
 
-| Language | Kernel | Register with |
-| --- | --- | --- |
-| Julia | [IJulia](https://github.com/JuliaLang/IJulia.jl) | `using Pkg; Pkg.add("IJulia")` |
-| R | [IRkernel](https://irkernel.github.io) | `IRkernel::installspec()` |
-| Rust | [evcxr](https://github.com/evcxr/evcxr) | `evcxr_jupyter --install` |
+Each command below runs in your shell, installs the kernel and registers its kernelspec for your user. `jupyter kernelspec list` (or jOtter's kernel popup) shows the result.
+
+<Tabs>
+  <TabItem label="Julia">
+    [IJulia](https://github.com/JuliaLang/IJulia.jl), registered as `julia-<version>`, e.g. `julia-1.12`:
+    ```sh
+    julia -e 'using Pkg; Pkg.add("IJulia"); using IJulia; installkernel("Julia")'
+    ```
+  </TabItem>
+  <TabItem label="R">
+    [IRkernel](https://irkernel.github.io), registered as `ir`:
+    ```sh
+    Rscript -e 'install.packages("IRkernel", repos = "https://cloud.r-project.org"); IRkernel::installspec()'
+    ```
+  </TabItem>
+  <TabItem label="Rust">
+    [evcxr](https://github.com/evcxr/evcxr), registered as `rust`:
+    ```sh
+    cargo install --locked evcxr_jupyter
+    evcxr_jupyter --install
+    ```
+  </TabItem>
+</Tabs>
 
 The repository has a small notebook to try each with: [`examples/julia.ipynb`](https://github.com/samox73/jotter/blob/main/examples/julia.ipynb), [`examples/r.ipynb`](https://github.com/samox73/jotter/blob/main/examples/r.ipynb) and [`examples/rust.ipynb`](https://github.com/samox73/jotter/blob/main/examples/rust.ipynb).
 
