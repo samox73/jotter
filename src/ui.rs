@@ -3,25 +3,34 @@
 //! renders live from the editor buffer. Images render as kitty/sixel graphics
 //! into blank placeholder lines reserved in the text flow.
 
-use crate::app::{Align, App};
-use crate::notebook::{Cell, Notebook, join_multiline};
-use crate::nvim::ModeKind;
 use ansi_to_tui::IntoText;
 use base64::Engine;
-use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::Paragraph;
-use ratatui_image::picker::{Capability, Picker, ProtocolType};
-use ratatui_image::protocol::kitty::Kitty;
-use ratatui_image::sliced::{SignedPosition, SlicedImage, SlicedProtocol};
+use ratatui::{
+    Frame,
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span, Text},
+    widgets::Paragraph,
+};
+use ratatui_image::{
+    picker::{Capability, Picker, ProtocolType},
+    protocol::kitty::Kitty,
+    sliced::{SignedPosition, SlicedImage, SlicedProtocol},
+};
 use serde_json::Value;
-use syntect::easy::HighlightLines;
-use syntect::highlighting::{Theme, ThemeSet};
-use syntect::parsing::SyntaxSet;
-use syntect::util::LinesWithEndings;
+use syntect::{
+    easy::HighlightLines,
+    highlighting::{Theme, ThemeSet},
+    parsing::SyntaxSet,
+    util::LinesWithEndings,
+};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+use crate::{
+    app::{Align, App},
+    notebook::{Cell, Notebook, join_multiline},
+    nvim::ModeKind,
+};
 
 const OUTPUT_STYLE: Style = Style::new().fg(Color::Gray);
 const ERROR_STYLE: Style = Style::new().fg(Color::Red);
@@ -87,10 +96,7 @@ impl Drop for KittyImage {
 
 /// Write the deletes queued since the last call; call after a draw.
 pub fn flush_kitty_deletes(out: &mut impl std::io::Write) -> std::io::Result<()> {
-    let deletes = KITTY_DELETES
-        .lock()
-        .map(|mut d| std::mem::take(&mut *d))
-        .unwrap_or_default();
+    let deletes = KITTY_DELETES.lock().map(|mut d| std::mem::take(&mut *d)).unwrap_or_default();
     if !deletes.is_empty() {
         out.write_all(deletes.as_bytes())?;
         out.flush()?;
@@ -123,24 +129,15 @@ pub struct Wrapped {
 impl Wrapped {
     /// Row + in-row display column of display column `x` on logical `line`.
     fn locate(&self, line: usize, x: usize) -> (usize, usize) {
-        let (a, b) = (
-            self.first_row[line],
-            self.first_row[line + 1].max(self.first_row[line] + 1),
-        );
-        let r = (a..b.min(self.origin.len()))
-            .rev()
-            .find(|&r| self.origin[r].x <= x)
-            .unwrap_or(a);
+        let (a, b) = (self.first_row[line], self.first_row[line + 1].max(self.first_row[line] + 1));
+        let r = (a..b.min(self.origin.len())).rev().find(|&r| self.origin[r].x <= x).unwrap_or(a);
         (r, x - self.origin.get(r).map_or(0, |o| o.x))
     }
 
     /// Row holding char `col` of logical `line`, and that row's first char.
     fn row_of_char(&self, line: usize, col: usize) -> (usize, usize) {
         let (a, b) = (self.first_row[line], self.first_row[line + 1]);
-        let r = (a..b)
-            .rev()
-            .find(|&r| self.origin[r].col <= col)
-            .unwrap_or(a);
+        let r = (a..b).rev().find(|&r| self.origin[r].col <= col).unwrap_or(a);
         (r, self.origin.get(r).map_or(0, |o| o.col))
     }
 }
@@ -152,26 +149,16 @@ impl Wrapped {
 /// overflow), so char columns map 1:1 onto rows.
 pub fn wrap_lines(lines: &[Line<'static>], width: u16) -> Wrapped {
     let w = width as usize;
-    let mut out = Wrapped {
-        width,
-        ..Default::default()
-    };
+    let mut out = Wrapped { width, ..Default::default() };
     for (li, line) in lines.iter().enumerate() {
         out.first_row.push(out.rows.len());
         if w == 0 || line.width() <= w {
             out.rows.push(line.clone());
-            out.origin.push(RowOrigin {
-                line: li,
-                col: 0,
-                x: 0,
-            });
+            out.origin.push(RowOrigin { line: li, col: 0, x: 0 });
             continue;
         }
-        let chars: Vec<(char, Style)> = line
-            .spans
-            .iter()
-            .flat_map(|s| s.content.chars().map(move |c| (c, s.style)))
-            .collect();
+        let chars: Vec<(char, Style)> =
+            line.spans.iter().flat_map(|s| s.content.chars().map(move |c| (c, s.style))).collect();
         let cw: Vec<usize> = chars.iter().map(|(c, _)| c.width().unwrap_or(0)).collect();
         let mut starts = vec![0usize];
         let (mut row_w, mut i) = (0usize, 0usize);
@@ -181,10 +168,7 @@ pub fn wrap_lines(lines: &[Line<'static>], width: u16) -> Wrapped {
                 i += 1;
                 continue;
             }
-            let j = i + chars[i..]
-                .iter()
-                .position(|(c, _)| *c == ' ')
-                .unwrap_or(chars.len() - i);
+            let j = i + chars[i..].iter().position(|(c, _)| *c == ' ').unwrap_or(chars.len() - i);
             let word: usize = cw[i..j].iter().sum();
             if row_w + word <= w {
                 row_w += word;
@@ -213,11 +197,7 @@ pub fn wrap_lines(lines: &[Line<'static>], width: u16) -> Wrapped {
                 }
             }
             out.rows.push(Line::from(spans).style(line.style));
-            out.origin.push(RowOrigin {
-                line: li,
-                col: a,
-                x: cw[..a].iter().sum(),
-            });
+            out.origin.push(RowOrigin { line: li, col: a, x: cw[..a].iter().sum() });
         }
     }
     out.first_row.push(out.rows.len());
@@ -283,11 +263,7 @@ impl CellBlock {
     /// Rough memory held by the rendered content: image pixels (RGBA) plus
     /// a share per line. Only compared against the eviction budget.
     fn cost(&self) -> usize {
-        let px: usize = self
-            .images
-            .iter()
-            .map(|i| i.px.0 as usize * i.px.1 as usize * 4)
-            .sum();
+        let px: usize = self.images.iter().map(|i| i.px.0 as usize * i.px.1 as usize * 4).sum();
         px + self.lines.len() * 256
     }
 
@@ -306,11 +282,7 @@ impl CellBlock {
             return;
         }
         if self.wrap.width != width || self.wrap.first_row.len() != self.lines.len() + 1 {
-            let src_w = if width == 0 {
-                0
-            } else {
-                width.saturating_sub(GUTTER).max(1)
-            };
+            let src_w = if width == 0 { 0 } else { width.saturating_sub(GUTTER).max(1) };
             let (src, out) = self.lines.split_at(self.src_lines);
             let mut w = wrap_lines(src, src_w);
             let o = wrap_lines(out, width);
@@ -318,20 +290,15 @@ impl CellBlock {
             w.first_row.pop(); // the source end sentinel == first output row
             w.first_row.extend(o.first_row.iter().map(|r| r + base_row));
             w.rows.extend(o.rows);
-            w.origin.extend(o.origin.into_iter().map(|r| RowOrigin {
-                line: r.line + self.src_lines,
-                ..r
-            }));
+            w.origin.extend(
+                o.origin.into_iter().map(|r| RowOrigin { line: r.line + self.src_lines, ..r }),
+            );
             w.width = width;
             self.wrap = w;
         }
         let src = self.wrap.first_row[self.src_lines];
-        let image_rows = self
-            .images
-            .iter()
-            .filter(|i| i.line >= self.src_lines)
-            .map(|i| i.rows as usize)
-            .sum(); // placeholder lines are empty: one row each, never wrapped
+        let image_rows =
+            self.images.iter().filter(|i| i.line >= self.src_lines).map(|i| i.rows as usize).sum(); // placeholder lines are empty: one row each, never wrapped
         self.rows = (src, self.wrap.rows.len() - src, image_rows);
         self.laid_for = Some(width);
     }
@@ -414,17 +381,9 @@ impl CellBlock {
                 ))
                 .collect::<String>(),
             self.wrap.width,
-            if self.rendered {
-                ""
-            } else {
-                " · not rendered"
-            },
+            if self.rendered { "" } else { " · not rendered" },
             if self.collapsed { " · collapsed" } else { "" },
-            if self.full_images {
-                " · native-size"
-            } else {
-                ""
-            },
+            if self.full_images { " · native-size" } else { "" },
         )
     }
 }
@@ -535,18 +494,12 @@ impl Rendered {
     /// through a long notebook (and re-sent every kitty image); with a budget,
     /// a notebook that fits stays rendered once it has been seen.
     pub fn evict(&mut self, keep: impl Fn(usize) -> bool) {
-        let mut total: usize = self
-            .blocks
-            .iter()
-            .filter(|b| b.rendered)
-            .map(CellBlock::cost)
-            .sum();
+        let mut total: usize = self.blocks.iter().filter(|b| b.rendered).map(CellBlock::cost).sum();
         if total <= RENDER_BUDGET {
             return;
         }
-        let mut old: Vec<usize> = (0..self.blocks.len())
-            .filter(|&i| self.blocks[i].rendered && !keep(i))
-            .collect();
+        let mut old: Vec<usize> =
+            (0..self.blocks.len()).filter(|&i| self.blocks[i].rendered && !keep(i)).collect();
         old.sort_by_key(|&i| self.blocks[i].seen);
         for i in old {
             if total <= RENDER_BUDGET {
@@ -660,10 +613,8 @@ impl Rendered {
     /// Syntax-highlight source text (used for cached blocks and the live editor).
     /// `lang` may be a name ("rust", "python") or an extension ("rs", "py").
     pub fn highlight(&self, source: &str, lang: &str) -> Vec<Line<'static>> {
-        let syntax = self
-            .ps
-            .find_syntax_by_token(lang)
-            .unwrap_or_else(|| self.ps.find_syntax_plain_text());
+        let syntax =
+            self.ps.find_syntax_by_token(lang).unwrap_or_else(|| self.ps.find_syntax_plain_text());
         let mut hl = HighlightLines::new(syntax, &self.theme);
         let theme_bg = self.theme.settings.background;
         LinesWithEndings::from(source)
@@ -711,11 +662,7 @@ impl Rendered {
         } else if est {
             (Self::plain(&cell.source), Vec::new(), Vec::new())
         } else {
-            (
-                self.highlight(&cell.source, self.cell_lang(cell)),
-                Vec::new(),
-                Vec::new(),
-            )
+            (self.highlight(&cell.source, self.cell_lang(cell)), Vec::new(), Vec::new())
         };
         let src_lines = lines.len();
         for output in cell.outputs.iter().flatten() {
@@ -729,17 +676,13 @@ impl Rendered {
                 .or_else(|| typeset.then(|| self.try_latex(output, est))?)
             {
                 self.push_image(img, &mut lines, &mut images);
-            } else if let Some(md) = data
-                .and_then(|d| d.get("text/markdown"))
-                .filter(|_| typeset)
-            {
+            } else if let Some(md) = data.and_then(|d| d.get("text/markdown")).filter(|_| typeset) {
                 let (md_lines, md_images, _) = self.render_markdown(&join_multiline(md), None, est);
                 let base = lines.len();
                 lines.extend(md_lines);
-                images.extend(md_images.into_iter().map(|im| InlineImage {
-                    line: im.line + base,
-                    ..im
-                }));
+                images.extend(
+                    md_images.into_iter().map(|im| InlineImage { line: im.line + base, ..im }),
+                );
             } else {
                 lines.extend(output_lines(output));
             }
@@ -769,10 +712,7 @@ impl Rendered {
         lines: &mut Vec<Line<'static>>,
         images: &mut Vec<InlineImage>,
     ) {
-        let entry = InlineImage {
-            line: lines.len(),
-            ..entry
-        };
+        let entry = InlineImage { line: lines.len(), ..entry };
         for _ in 0..entry.rows {
             lines.push(Line::raw(""));
         }
@@ -799,9 +739,7 @@ impl Rendered {
             static NEXT: AtomicU32 = AtomicU32::new(1);
             let id = NEXT.fetch_add(1, Ordering::Relaxed);
             let size = ratatui::layout::Size::new(entry.cols, entry.rows);
-            let compress = picker
-                .capabilities()
-                .contains(&Capability::KittyCompression);
+            let compress = picker.capabilities().contains(&Capability::KittyCompression);
             let tmux = picker.tmux_detected();
             let kitty = Kitty::new(img, size, id, tmux, compress).ok()?;
             entry.kitty = Some(KittyImage { id, tmux });
@@ -848,10 +786,7 @@ impl Rendered {
     /// Layout pass: rendered math, guessed at `cols` x `rows` cells.
     fn sized_math(&self, cols: usize, rows: u16) -> Option<InlineImage> {
         let font = self.picker.as_ref()?.font_size();
-        self.sized_px((
-            cols.max(1) as u32 * font.width as u32,
-            rows as u32 * font.height as u32,
-        ))
+        self.sized_px((cols.max(1) as u32 * font.width as u32, rows as u32 * font.height as u32))
     }
 
     /// Pixel size of an output's raster/SVG image, from its header.
@@ -869,14 +804,12 @@ impl Rendered {
         let data = output.get("data")?;
         for mime in ["image/png", "image/jpeg", "image/gif"] {
             let Some(v) = data.get(mime) else { continue };
-            return image::load_from_memory(&b64_bytes(v)?)
-                .ok()
-                .map(crate::recolor::apply);
+            return image::load_from_memory(&b64_bytes(v)?).ok().map(crate::recolor::apply);
         }
         let svg = join_multiline(data.get("image/svg+xml")?);
-        Some(crate::recolor::apply(image::DynamicImage::ImageRgba8(
-            crate::latex::render_svg(&svg)?,
-        )))
+        Some(crate::recolor::apply(image::DynamicImage::ImageRgba8(crate::latex::render_svg(
+            &svg,
+        )?)))
     }
 
     /// If the output carries a raster/SVG image and graphics are available,
@@ -893,11 +826,7 @@ impl Rendered {
     /// fitted to the screen for a fullscreen overlay. One-off, nothing cached.
     pub fn zoom_image(&self, cell: &Cell, area: Rect) -> Option<SlicedProtocol> {
         let picker = self.picker.as_ref()?;
-        let img = cell
-            .outputs
-            .iter()
-            .flatten()
-            .find_map(|o| self.decode_output_image(o))?;
+        let img = cell.outputs.iter().flatten().find_map(|o| self.decode_output_image(o))?;
         let font = picker.font_size();
         let (max_w, max_h) = (
             (area.width as u32 * font.width as u32).max(1),
@@ -957,9 +886,7 @@ impl Rendered {
                 for l in crate::latex::to_unicode_approx(tex).lines() {
                     lines.push(Line::styled(
                         format!("    {l}"),
-                        Style::new()
-                            .fg(Color::Magenta)
-                            .add_modifier(Modifier::ITALIC),
+                        Style::new().fg(Color::Magenta).add_modifier(Modifier::ITALIC),
                     ));
                 }
             }
@@ -994,16 +921,8 @@ impl Rendered {
             let t = raw.trim();
             if let Some((lang, buf)) = &mut fence {
                 if t.starts_with("```") {
-                    let lang = if lang.is_empty() {
-                        self.lang.as_str()
-                    } else {
-                        lang.as_str()
-                    };
-                    let body = if est {
-                        Self::plain(buf)
-                    } else {
-                        self.highlight(buf, lang)
-                    };
+                    let lang = if lang.is_empty() { self.lang.as_str() } else { lang.as_str() };
+                    let body = if est { Self::plain(buf) } else { self.highlight(buf, lang) };
                     src_map.extend(i - body.len()..i); // fence body maps 1:1
                     lines.extend(body);
                     fence = None;
@@ -1117,10 +1036,7 @@ impl Rendered {
             return None; // alt-text fallback
         }
         let path = self.dir.join(src);
-        if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
-        {
+        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")) {
             let svg = std::fs::read_to_string(path).ok()?;
             if est {
                 return self.sized(crate::latex::svg_px(&svg)?, false);
@@ -1147,12 +1063,8 @@ impl Rendered {
         est: bool,
     ) -> Line<'static> {
         let code_style = Style::new().fg(Color::Yellow);
-        let math_style = Style::new()
-            .fg(Color::Magenta)
-            .add_modifier(Modifier::ITALIC);
-        let link_style = Style::new()
-            .fg(Color::Blue)
-            .add_modifier(Modifier::UNDERLINED);
+        let math_style = Style::new().fg(Color::Magenta).add_modifier(Modifier::ITALIC);
+        let link_style = Style::new().fg(Color::Blue).add_modifier(Modifier::UNDERLINED);
         let url_style = Style::new().fg(Color::DarkGray);
         let mut spans: Vec<Span<'static>> = Vec::new();
         let mut col = 0usize; // display column (unicode width)
@@ -1228,11 +1140,7 @@ impl Rendered {
                             // reserve the columns in the text flow; NBSP so
                             // soft wrapping never splits the equation
                             spans.push(Span::raw("\u{a0}".repeat(entry.cols as usize)));
-                            images.push(InlineImage {
-                                line: line_idx,
-                                col: col as u16,
-                                ..entry
-                            });
+                            images.push(InlineImage { line: line_idx, col: col as u16, ..entry });
                             col += entry.cols as usize;
                             continue;
                         }
@@ -1273,11 +1181,7 @@ impl Rendered {
                         text.push_str(&inner);
                         continue;
                     }
-                    let mods = if bold {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::ITALIC
-                    };
+                    let mods = if bold { Modifier::BOLD } else { Modifier::ITALIC };
                     push_styled(
                         inner,
                         Style::new().add_modifier(mods),
@@ -1452,9 +1356,7 @@ fn render_table(rows: &[String]) -> Vec<Line<'static>> {
         .collect();
     let is_sep = |row: &[String]| {
         !row.is_empty()
-            && row
-                .iter()
-                .all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':')))
+            && row.iter().all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':')))
     };
     let ncols = parsed.iter().map(Vec::len).max().unwrap_or(0);
     let mut widths = vec![0usize; ncols];
@@ -1470,11 +1372,7 @@ fn render_table(rows: &[String]) -> Vec<Line<'static>> {
         .enumerate()
         .map(|(i, row)| {
             if is_sep(row) {
-                let rule = widths
-                    .iter()
-                    .map(|w| "─".repeat(w + 2))
-                    .collect::<Vec<_>>()
-                    .join("┼");
+                let rule = widths.iter().map(|w| "─".repeat(w + 2)).collect::<Vec<_>>().join("┼");
                 return Line::styled(rule, frame_style);
             }
             let style = if header && i == 0 {
@@ -1508,24 +1406,16 @@ fn output_lines(output: &Value) -> Vec<Line<'static>> {
                 (plain, OUTPUT_STYLE)
             } else if let Some(obj) = data.as_object() {
                 // no renderable rep (or no graphics): name what's there
-                (
-                    obj.keys()
-                        .map(|k| format!("[{k}]"))
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    OUTPUT_STYLE,
-                )
+                (obj.keys().map(|k| format!("[{k}]")).collect::<Vec<_>>().join(" "), OUTPUT_STYLE)
             } else {
                 return vec![];
             }
         }
         Some("error") => (
             match &output["traceback"] {
-                Value::Array(tb) => tb
-                    .iter()
-                    .filter_map(|l| l.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
+                Value::Array(tb) => {
+                    tb.iter().filter_map(|l| l.as_str()).collect::<Vec<_>>().join("\n")
+                }
                 other => join_multiline(other),
             },
             ERROR_STYLE,
@@ -1552,10 +1442,7 @@ fn output_lines(output: &Value) -> Vec<Line<'static>> {
                 l
             })
             .collect(),
-        Err(_) => text
-            .lines()
-            .map(|l| Line::styled(l.to_string(), style))
-            .collect(),
+        Err(_) => text.lines().map(|l| Line::styled(l.to_string(), style)).collect(),
     }
 }
 
@@ -1585,20 +1472,14 @@ enum Pick {
 
 impl Pick {
     fn color(self, cell: &Cell) -> Color {
-        if self == Pick::Visual {
-            VISUAL_COLOR
-        } else {
-            type_color(cell)
-        }
+        if self == Pick::Visual { VISUAL_COLOR } else { type_color(cell) }
     }
 }
 
 /// The gutter bar: bright on picked cells, dimmed elsewhere. Every modifier
 /// a markdown heading line carries is masked off.
 fn gutter_span(cell: &Cell, pick: Pick) -> Span<'static> {
-    let style = Style::new()
-        .fg(pick.color(cell))
-        .remove_modifier(Modifier::all());
+    let style = Style::new().fg(pick.color(cell)).remove_modifier(Modifier::all());
     let style = if pick != Pick::Off {
         style.add_modifier(Modifier::BOLD)
     } else {
@@ -1636,15 +1517,9 @@ fn header_line(
     if pick != Pick::Off {
         label_style = label_style.add_modifier(Modifier::REVERSED);
     }
-    let rule = if pick != Pick::Off {
-        Style::new().fg(color)
-    } else {
-        Style::new().fg(Color::DarkGray)
-    };
-    let mut spans = vec![
-        gutter_span(cell, pick),
-        Span::styled(format!(" {label} "), label_style),
-    ];
+    let rule =
+        if pick != Pick::Off { Style::new().fg(color) } else { Style::new().fg(Color::DarkGray) };
+    let mut spans = vec![gutter_span(cell, pick), Span::styled(format!(" {label} "), label_style)];
     if editing {
         spans.push(Span::styled(" ✎", Style::new().fg(color)));
     }
@@ -1758,19 +1633,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     }
     let view = |rendered: &Rendered, i: usize| -> CellView {
         let block = &rendered.blocks[i];
-        let src = if editing_cell == Some(i) {
-            editor_wrap.rows.len()
-        } else {
-            block.src_rows()
-        };
+        let src = if editing_cell == Some(i) { editor_wrap.rows.len() } else { block.src_rows() };
         let (win_start, win_rows, footer) = block.window();
-        CellView {
-            src,
-            win_start,
-            win_rows,
-            out_len: block.out_len(),
-            footer,
-        }
+        CellView { src, win_start, win_rows, out_len: block.out_len(), footer }
     };
     // Only cells on or near the screen are rendered; the rest are laid out
     // from row counts (estimated for math). Rendering a cell can change its
@@ -1887,11 +1752,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
                     run,
                     editing,
                     block.elapsed,
-                    marks
-                        .iter()
-                        .filter(|m| m.0 == ci)
-                        .map(|m| format!("'{}", m.1))
-                        .collect(),
+                    marks.iter().filter(|m| m.0 == ci).map(|m| format!("'{}", m.1)).collect(),
                     body.width,
                 ),
                 HitKind::Other,
@@ -1901,10 +1762,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
             let wrap = if editing { &editor_wrap } else { &block.wrap };
             let o = wrap.origin[b];
             let kind = if editing || (cell.cell_type != "markdown" && !is_latex_raw(cell)) {
-                HitKind::Source {
-                    line: o.line,
-                    col: o.col,
-                }
+                HitKind::Source { line: o.line, col: o.col }
             } else if let Some(&s) = block.src_map.get(o.line) {
                 // rendered markdown row -> raw source line
                 HitKind::Source { line: s, col: 0 }
@@ -1916,10 +1774,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
             (row, kind)
         } else if local <= v.src + v.win_rows {
             let out_row = v.win_start + (local - 1 - v.src);
-            (
-                block.wrap.rows[block.src_rows() + out_row].clone(),
-                HitKind::Output,
-            )
+            (block.wrap.rows[block.src_rows() + out_row].clone(), HitKind::Output)
         } else if v.footer && local == 1 + v.src + v.win_rows {
             let label = if block.collapsed {
                 format!("··· {} output lines hidden (o) ···", v.out_len)
@@ -1931,10 +1786,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
                     v.out_len
                 )
             };
-            (
-                Line::styled(label, Style::new().fg(Color::DarkGray)),
-                HitKind::Output,
-            )
+            (Line::styled(label, Style::new().fg(Color::DarkGray)), HitKind::Output)
         } else {
             (Line::raw(""), HitKind::Other) // separator
         };
@@ -1948,12 +1800,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     // clips rows outside the area it is given: the image was transmitted once,
     // only row-offset placeholders move on scroll. Skipped while the zoom
     // overlay owns the screen.
-    for (i, block) in rendered
-        .blocks
-        .iter()
-        .enumerate()
-        .filter(|_| app.zoom.is_none())
-    {
+    for (i, block) in rendered.blocks.iter().enumerate().filter(|_| app.zoom.is_none()) {
         let editing = editing_cell == Some(i);
         let v = view(rendered, i);
         for img in &block.images {
@@ -1972,13 +1819,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
                 if rel + (img.rows as isize) <= 0 || rel >= body.height as isize {
                     continue;
                 }
-                (
-                    body,
-                    SignedPosition {
-                        x: (x as u16 + GUTTER) as i16,
-                        y: rel as i16,
-                    },
-                )
+                (body, SignedPosition { x: (x as u16 + GUTTER) as i16, y: rel as i16 })
             } else {
                 // output images: clipped by the output window, then the viewport
                 let ol = row - block.src_rows();
@@ -1998,13 +1839,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
                     height: (y1 - y0) as u16,
                 };
                 let img_rel = wtop + ol as isize - v.win_start as isize;
-                (
-                    area,
-                    SignedPosition {
-                        x: x as i16,
-                        y: (img_rel - y0) as i16,
-                    },
-                )
+                (area, SignedPosition { x: x as i16, y: (img_rel - y0) as i16 })
             };
             if let Some(proto) = &img.proto {
                 frame.render_widget(SlicedImage::new(proto, pos), area);
@@ -2055,11 +1890,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     });
     let tail = if let Some(p) = prompt {
         p
-    } else if let Some(c) = app
-        .editor
-        .as_ref()
-        .and_then(|e| e.cmdline())
-        .filter(|c| !c.starts_with(':'))
+    } else if let Some(c) =
+        app.editor.as_ref().and_then(|e| e.cmdline()).filter(|c| !c.starts_with(':'))
     {
         format!("{c}▏")
     } else if let Some(q) = &app.confirm {
@@ -2072,10 +1904,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         Line::from(vec![
             Span::styled(
                 mode_label,
-                Style::new()
-                    .fg(Color::Black)
-                    .bg(mode_bg)
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(Color::Black).bg(mode_bg).add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(" {tail}")),
         ])
@@ -2083,18 +1912,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         Line::from(vec![
             Span::styled(
                 mode_label,
-                Style::new()
-                    .fg(Color::Black)
-                    .bg(mode_bg)
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(Color::Black).bg(mode_bg).add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
                 " {}{}  cell {}/{}  ",
-                if app.is_scratch() {
-                    "[scratch]".into()
-                } else {
-                    app.path.display().to_string()
-                },
+                if app.is_scratch() { "[scratch]".into() } else { app.path.display().to_string() },
                 if app.dirty { " [+]" } else { "" },
                 app.selected + 1,
                 app.notebook.cells.len()
@@ -2124,11 +1946,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         // align the popup's text with the token start (the live completer's
         // `.attr` matches display without the dot)
         let (start, end) = c.span();
-        let typed: String = editor_src
-            .chars()
-            .skip(start)
-            .take(end.saturating_sub(start))
-            .collect();
+        let typed: String =
+            editor_src.chars().skip(start).take(end.saturating_sub(start)).collect();
         let typed_w = typed.trim_start_matches('.').width() as u16;
         draw_completion(frame, c, at, typed_w, body, &rendered.panel());
     }
@@ -2148,24 +1967,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         let back = if sig.name_start() >= line_start {
             let from = sig.name_start() - line_start;
             let line = editor_src.split('\n').nth(row).unwrap_or("");
-            let typed: String = line
-                .chars()
-                .skip(from)
-                .take(col.saturating_sub(from))
-                .collect();
+            let typed: String = line.chars().skip(from).take(col.saturating_sub(from)).collect();
             typed.width() as u16
         } else {
             0
         };
-        draw_signature(
-            frame,
-            sig,
-            at,
-            back,
-            completion_below,
-            body,
-            &rendered.panel(),
-        );
+        draw_signature(frame, sig, at, back, completion_below, body, &rendered.panel());
     }
     if app.show_help {
         draw_help(frame);
@@ -2183,11 +1990,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
         && p.kind == crate::app::PromptKind::Command
     {
         draw_cmdline(frame, &p.buf);
-    } else if let Some(c) = app
-        .editor
-        .as_ref()
-        .and_then(|e| e.cmdline())
-        .and_then(|c| c.strip_prefix(':'))
+    } else if let Some(c) =
+        app.editor.as_ref().and_then(|e| e.cmdline()).and_then(|c| c.strip_prefix(':'))
     {
         draw_cmdline(frame, c); // nvim's own `:` line, same look
     }
@@ -2211,9 +2015,8 @@ const MARK_STYLE: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::
 /// (cell index, letter) for every mark whose cell still exists, in notebook
 /// order (an outline), letters in order within a cell.
 fn mark_entries(app: &App) -> Vec<(usize, char)> {
-    let mut v: Vec<(usize, char)> = (app.marks.keys())
-        .filter_map(|&c| Some((app.mark_cell(c)?, c)))
-        .collect();
+    let mut v: Vec<(usize, char)> =
+        (app.marks.keys()).filter_map(|&c| Some((app.mark_cell(c)?, c))).collect();
     v.sort();
     v
 }
@@ -2226,10 +2029,7 @@ fn draw_marks(frame: &mut Frame, area: Rect, app: &App, marks: &[(usize, char)])
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(dim)
-        .title(Span::styled(
-            " Marks ",
-            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        ))
+        .title(Span::styled(" Marks ", Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
         .title_bottom(Line::styled(" 'a jumps ", dim).right_aligned());
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -2282,10 +2082,7 @@ fn draw_cmdline(frame: &mut Frame, text: &str) {
     let tail: String = text.chars().skip(skip).collect();
     frame.set_cursor_position((inner.x + 2 + tail.width() as u16, inner.y));
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("› ", accent),
-            Span::raw(tail),
-        ])),
+        Paragraph::new(Line::from(vec![Span::styled("› ", accent), Span::raw(tail)])),
         inner,
     );
 }
@@ -2303,11 +2100,7 @@ fn sel_range(
     row: usize,
     len: usize,
 ) -> Option<(usize, usize)> {
-    let (lo, hi) = if anchor <= cursor {
-        (anchor, cursor)
-    } else {
-        (cursor, anchor)
-    };
+    let (lo, hi) = if anchor <= cursor { (anchor, cursor) } else { (cursor, anchor) };
     if row < lo.0 || row > hi.0 {
         return None;
     }
@@ -2315,10 +2108,9 @@ fn sel_range(
     match kind {
         ModeKind::VisualLine => Some((0, eol)),
         ModeKind::VisualBlock => Some((lo.1.min(hi.1), lo.1.max(hi.1))),
-        ModeKind::Visual => Some((
-            if row == lo.0 { lo.1 } else { 0 },
-            if row == hi.0 { hi.1 } else { eol },
-        )),
+        ModeKind::Visual => {
+            Some((if row == lo.0 { lo.1 } else { 0 }, if row == hi.0 { hi.1 } else { eol }))
+        }
         _ => None,
     }
 }
@@ -2328,10 +2120,7 @@ fn sel_range(
 fn overlay_reversed(line: &mut Line<'static>, from: usize, to: usize) {
     if line_chars(line) == 0 {
         // empty line inside a selection: show one reversed cell
-        line.spans = vec![Span::styled(
-            " ",
-            Style::new().add_modifier(Modifier::REVERSED),
-        )];
+        line.spans = vec![Span::styled(" ", Style::new().add_modifier(Modifier::REVERSED))];
         return;
     }
     let byte_at = |s: &str, ci: usize| s.char_indices().nth(ci).map_or(s.len(), |(b, _)| b);
@@ -2351,10 +2140,7 @@ fn overlay_reversed(line: &mut Line<'static>, from: usize, to: usize) {
         if a > 0 {
             out.push(Span::styled(text[..a].to_string(), span.style));
         }
-        out.push(Span::styled(
-            text[a..b].to_string(),
-            span.style.add_modifier(Modifier::REVERSED),
-        ));
+        out.push(Span::styled(text[a..b].to_string(), span.style.add_modifier(Modifier::REVERSED)));
         if b < text.len() {
             out.push(Span::styled(text[b..].to_string(), span.style));
         }
@@ -2406,39 +2192,21 @@ fn draw_kernels(frame: &mut Frame, pick: &crate::app::KernelPick) {
     // the window of ROWS matches that keeps the selection in view
     let first = pick.selected.saturating_sub(ROWS - 1);
     let mut lines = vec![Line::from(format!("› {}▏", pick.filter))];
-    lines.extend(
-        shown
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take(ROWS)
-            .map(|(i, k)| {
-                let line = Line::from(format!("  {k}"));
-                if i == pick.selected {
-                    line.style(Style::new().add_modifier(Modifier::REVERSED))
-                } else {
-                    line
-                }
-            }),
-    );
+    lines.extend(shown.iter().enumerate().skip(first).take(ROWS).map(|(i, k)| {
+        let line = Line::from(format!("  {k}"));
+        if i == pick.selected {
+            line.style(Style::new().add_modifier(Modifier::REVERSED))
+        } else {
+            line
+        }
+    }));
     if shown.is_empty() {
         lines.push(Line::styled("  no match", Style::new().fg(Color::DarkGray)));
     }
     let title = format!("kernel '{}' not found — start which?", pick.wanted);
-    let width = lines
-        .iter()
-        .map(Line::width)
-        .max()
-        .unwrap_or(0)
-        .max(title.chars().count() + 2)
-        + 6;
+    let width = lines.iter().map(Line::width).max().unwrap_or(0).max(title.chars().count() + 2) + 6;
     let area = centered(frame.area(), width as u16, lines.len() as u16 + 2);
-    let inner = modal(
-        frame,
-        area,
-        &title,
-        "type to filter · ↑↓ · Enter starts · Esc none",
-    );
+    let inner = modal(frame, area, &title, "type to filter · ↑↓ · Enter starts · Esc none");
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -2450,22 +2218,11 @@ fn draw_stdin(frame: &mut Frame, req: &crate::app::StdinReq) {
         "" => "input()",
         p => p,
     };
-    let inner = modal(
-        frame,
-        centered(area, width, 3),
-        title,
-        "Enter sends · Esc sends empty",
-    );
-    let shown: String = if req.password {
-        "•".repeat(req.buf.chars().count())
-    } else {
-        req.buf.clone()
-    };
+    let inner = modal(frame, centered(area, width, 3), title, "Enter sends · Esc sends empty");
+    let shown: String =
+        if req.password { "•".repeat(req.buf.chars().count()) } else { req.buf.clone() };
     // keep the tail (and the cursor) inside the box when the input outgrows it
-    let skip = shown
-        .chars()
-        .count()
-        .saturating_sub((inner.width as usize).saturating_sub(1));
+    let skip = shown.chars().count().saturating_sub((inner.width as usize).saturating_sub(1));
     let tail: String = shown.chars().skip(skip).collect();
     frame.set_cursor_position((inner.x + tail.chars().count() as u16, inner.y));
     frame.render_widget(Paragraph::new(tail), inner);
@@ -2475,11 +2232,8 @@ fn draw_stdin(frame: &mut Frame, req: &crate::app::StdinReq) {
 /// dependencies), newest at the bottom. `up` = rows scrolled up; clamped here.
 fn draw_logs(frame: &mut Frame, up: &mut usize) {
     let area = frame.area();
-    let panel = centered(
-        area,
-        area.width.saturating_sub(4).clamp(40, 140),
-        area.height.saturating_sub(2),
-    );
+    let panel =
+        centered(area, area.width.saturating_sub(4).clamp(40, 140), area.height.saturating_sub(2));
     let rows = panel.height.saturating_sub(2) as usize;
     let lines: Vec<Line> = crate::log::with_entries(|entries| {
         *up = (*up).min(entries.len().saturating_sub(rows));
@@ -2493,10 +2247,7 @@ fn draw_logs(frame: &mut Frame, up: &mut usize) {
                     _ => Style::new().fg(Color::Green),
                 };
                 Line::from(vec![
-                    Span::styled(
-                        format!("{:>8.2}s ", e.secs),
-                        Style::new().fg(Color::DarkGray),
-                    ),
+                    Span::styled(format!("{:>8.2}s ", e.secs), Style::new().fg(Color::DarkGray)),
                     Span::styled(format!("{:<5} ", e.level), level),
                     Span::styled(format!("{} ", e.target), Style::new().fg(Color::Blue)),
                     Span::raw(e.msg.clone()),
@@ -2504,17 +2255,8 @@ fn draw_logs(frame: &mut Frame, up: &mut usize) {
             })
             .collect()
     });
-    let title = if *up == 0 {
-        "logs".to_string()
-    } else {
-        format!("logs · {} newer below", *up)
-    };
-    let inner = modal(
-        frame,
-        panel,
-        &title,
-        "j/k PgUp/PgDn g/G scroll · any other key closes",
-    );
+    let title = if *up == 0 { "logs".to_string() } else { format!("logs · {} newer below", *up) };
+    let inner = modal(frame, panel, &title, "j/k PgUp/PgDn g/G scroll · any other key closes");
     if lines.is_empty() {
         frame.render_widget(
             Paragraph::new(Line::styled("(empty)", Style::new().fg(Color::DarkGray))),
@@ -2536,22 +2278,14 @@ pub struct Panel {
 
 impl Rendered {
     pub fn panel(&self) -> Panel {
-        let base = self
-            .theme
-            .settings
-            .background
-            .map_or((0x2b, 0x30, 0x3b), |c| (c.r, c.g, c.b));
+        let base = self.theme.settings.background.map_or((0x2b, 0x30, 0x3b), |c| (c.r, c.g, c.b));
         let light = (base.0 as u32 * 299 + base.1 as u32 * 587 + base.2 as u32 * 114) / 1000 > 128;
         let target = if light { 0.0 } else { 255.0 };
         let mix = |t: f32| {
             let m = |c: u8| (c as f32 + (target - c as f32) * t) as u8;
             Color::Rgb(m(base.0), m(base.1), m(base.2))
         };
-        Panel {
-            bg: mix(0.08),
-            sel: mix(0.20),
-            thumb: mix(0.35),
-        }
+        Panel { bg: mix(0.08), sel: mix(0.20), thumb: mix(0.35) }
     }
 }
 
@@ -2663,16 +2397,8 @@ fn draw_signature(
     spans.push(Span::styled(" ", base));
     let line = Line::from(spans);
     let width = (line.width() as u16).min(body.width);
-    let x = cx
-        .saturating_sub(back + 1)
-        .max(body.x)
-        .min(body.x + body.width - width);
-    let area = Rect {
-        x,
-        y,
-        width,
-        height: 1,
-    };
+    let x = cx.saturating_sub(back + 1).max(body.x).min(body.x + body.width - width);
+    let area = Rect { x, y, width, height: 1 };
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(Paragraph::new(line), area);
 }
@@ -2700,38 +2426,16 @@ fn draw_completion(
     c.top = scroll_window(c.top, c.sel, shown, c.items.len());
     let scrollbar = c.items.len() > shown;
     // column widths over all items (stable while scrolling)
-    let name_w = c
-        .items
-        .iter()
-        .map(|i| i.label().width())
-        .max()
-        .unwrap_or(0)
-        .min(MAX_NAME);
-    let kind_w = c
-        .items
-        .iter()
-        .map(|i| kind_label(&i.kind).0.len())
-        .max()
-        .unwrap_or(0);
+    let name_w = c.items.iter().map(|i| i.label().width()).max().unwrap_or(0).min(MAX_NAME);
+    let kind_w = c.items.iter().map(|i| kind_label(&i.kind).0.len()).max().unwrap_or(0);
     let detail_w = c.items.iter().map(|i| i.detail.width()).max().unwrap_or(0);
     let fixed = 1 + name_w + 2 + kind_w + if detail_w > 0 { 2 } else { 0 } + 1 + scrollbar as usize;
     let width = (fixed + detail_w).min(body.width as usize) as u16;
     let detail_room = (width as usize).saturating_sub(fixed);
-    let x = cx
-        .saturating_sub(typed_w + 1)
-        .max(body.x)
-        .min(body.x + body.width.saturating_sub(width));
-    let y = if below >= shown {
-        cy + 1
-    } else {
-        cy - shown as u16
-    };
-    let area = Rect {
-        x,
-        y,
-        width,
-        height: shown as u16,
-    };
+    let x =
+        cx.saturating_sub(typed_w + 1).max(body.x).min(body.x + body.width.saturating_sub(width));
+    let y = if below >= shown { cy + 1 } else { cy - shown as u16 };
+    let area = Rect { x, y, width, height: shown as u16 };
     frame.render_widget(ratatui::widgets::Clear, area);
     let thumb = if scrollbar {
         let len = ((shown * shown) / c.items.len()).max(1);
@@ -2752,11 +2456,7 @@ fn draw_completion(
                 Span::styled(" ", base),
                 Span::styled(
                     format!("{name:<name_w$}"),
-                    if i == c.sel {
-                        base.add_modifier(Modifier::BOLD)
-                    } else {
-                        base
-                    },
+                    if i == c.sel { base.add_modifier(Modifier::BOLD) } else { base },
                 ),
                 Span::styled(format!("  {kind:<kind_w$}"), base.fg(kind_color)),
             ];
@@ -2764,20 +2464,12 @@ fn draw_completion(
                 let d = fit(&item.detail, detail_room);
                 spans.push(Span::styled(
                     format!("  {d:<detail_room$}"),
-                    if i == c.sel {
-                        base
-                    } else {
-                        base.fg(Color::Gray)
-                    },
+                    if i == c.sel { base } else { base.fg(Color::Gray) },
                 ));
             }
             spans.push(Span::styled(" ", base));
             if scrollbar {
-                let bar = if thumb.contains(&row) {
-                    panel.thumb
-                } else {
-                    panel.bg
-                };
+                let bar = if thumb.contains(&row) { panel.thumb } else { panel.bg };
                 spans.push(Span::styled(" ", Style::new().bg(bar)));
             }
             Line::from(spans)
@@ -2789,34 +2481,18 @@ fn draw_completion(
 /// Shift+Tab docs: scrollable (ANSI-colored) text; `top` clamped here.
 fn draw_pager(frame: &mut Frame, pager: &mut crate::app::Pager) {
     let area = frame.area();
-    let panel = centered(
-        area,
-        area.width.saturating_sub(4).clamp(40, 110),
-        area.height.saturating_sub(2),
-    );
-    let text = pager
-        .text
-        .into_text()
-        .unwrap_or_else(|_| Text::raw(pager.text.clone()));
+    let panel =
+        centered(area, area.width.saturating_sub(4).clamp(40, 110), area.height.saturating_sub(2));
+    let text = pager.text.into_text().unwrap_or_else(|_| Text::raw(pager.text.clone()));
     let rows = panel.height.saturating_sub(2) as usize;
     let total = text.lines.len();
     pager.top = pager.top.min(total.saturating_sub(rows));
     let title = if total > rows {
-        format!(
-            "{} · {}–{} of {total}",
-            pager.title,
-            pager.top + 1,
-            (pager.top + rows).min(total)
-        )
+        format!("{} · {}–{} of {total}", pager.title, pager.top + 1, (pager.top + rows).min(total))
     } else {
         pager.title.clone()
     };
-    let inner = modal(
-        frame,
-        panel,
-        &title,
-        "j/k PgUp/PgDn g/G scroll · any other key closes",
-    );
+    let inner = modal(frame, panel, &title, "j/k PgUp/PgDn g/G scroll · any other key closes");
     let lines: Vec<Line> = text.lines.into_iter().skip(pager.top).take(rows).collect();
     frame.render_widget(Paragraph::new(lines), inner);
 }
@@ -2835,12 +2511,7 @@ fn draw_debug(frame: &mut Frame, text: &str) {
         .collect();
     let width = lines.iter().map(Line::width).max().unwrap_or(0) as u16 + 4;
     let panel = centered(frame.area(), width.max(40), lines.len() as u16 + 2);
-    let inner = modal(
-        frame,
-        panel,
-        "debug · copied to clipboard",
-        "any key closes",
-    );
+    let inner = modal(frame, panel, "debug · copied to clipboard", "any key closes");
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -2969,9 +2640,7 @@ fn help_section(title: &str, rows: &[(&str, &str)]) -> Vec<Line<'static>> {
             }
             spans.push(Span::styled(k.to_string(), key));
         }
-        spans.push(Span::raw(
-            " ".repeat(HELP_KEY_W.saturating_sub(keys.chars().count())),
-        ));
+        spans.push(Span::raw(" ".repeat(HELP_KEY_W.saturating_sub(keys.chars().count()))));
         spans.push(Span::raw(what.to_string()));
         lines.push(Line::from(spans));
     }
@@ -2981,12 +2650,7 @@ fn help_section(title: &str, rows: &[(&str, &str)]) -> Vec<Line<'static>> {
 
 fn draw_help(frame: &mut Frame) {
     let sections: Vec<Vec<Line>> = HELP.iter().map(|(t, r)| help_section(t, r)).collect();
-    let col_w = sections
-        .iter()
-        .flatten()
-        .map(Line::width)
-        .max()
-        .unwrap_or(0) as u16;
+    let col_w = sections.iter().flatten().map(Line::width).max().unwrap_or(0) as u16;
     let area = frame.area();
     // two columns when they fit: split where the halves balance by height
     let two = area.width >= 2 * col_w + 4 + 4;
@@ -3007,12 +2671,8 @@ fn draw_help(frame: &mut Frame) {
     let right: Vec<Line> = right.iter().flatten().cloned().collect();
     let height = left.len().max(right.len()).saturating_sub(1) as u16; // drop trailing blank
     let width = if two { 2 * col_w + 4 } else { col_w };
-    let inner = modal(
-        frame,
-        centered(area, width + 4, height + 2),
-        "jOtter 🦦 keys",
-        "any key closes",
-    );
+    let inner =
+        modal(frame, centered(area, width + 4, height + 2), "jOtter 🦦 keys", "any key closes");
     if two {
         let [l, _, r] = Layout::horizontal([
             Constraint::Length(col_w),
@@ -3030,9 +2690,9 @@ fn draw_help(frame: &mut Frame) {
 #[cfg(test)]
 mod tests {
     #![allow(deprecated)] // Picker::from_fontsize is the only headless constructor
+    use ratatui_image::{FontSize, picker::Picker};
+
     use super::*;
-    use ratatui_image::FontSize;
-    use ratatui_image::picker::Picker;
 
     // 1x1 transparent png
     const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=";
@@ -3041,14 +2701,8 @@ mod tests {
     /// frame, so its replacement is on screen first.
     #[test]
     fn kitty_deletes_wait_for_the_flush() {
-        drop(KittyImage {
-            id: 7_000_001,
-            tmux: false,
-        });
-        drop(KittyImage {
-            id: 7_000_002,
-            tmux: true,
-        });
+        drop(KittyImage { id: 7_000_001, tmux: false });
+        drop(KittyImage { id: 7_000_002, tmux: true });
         let mut out = Vec::new();
         flush_kitty_deletes(&mut out).unwrap();
         let out = String::from_utf8(out).unwrap();
@@ -3067,21 +2721,14 @@ mod tests {
         let line = &output_lines(&out)[0];
         let hl: Vec<_> = line.spans.iter().filter(|s| s.style.bg.is_some()).collect();
         assert!(!hl.is_empty());
-        assert!(
-            hl.iter().all(|s| s.style.fg == Some(Color::Black)),
-            "{line:?}"
-        );
+        assert!(hl.iter().all(|s| s.style.fg == Some(Color::Black)), "{line:?}");
     }
 
     /// Invalid code (`f"{}"`, `np.(`) gets the theme's `invalid` style: text in
     /// the background colour on a coloured background. It must stay visible.
     #[test]
     fn invalid_code_stays_visible_in_every_theme() {
-        let nb = Notebook {
-            cells: Vec::new(),
-            extra: serde_json::Map::new(),
-            header: None,
-        };
+        let nb = Notebook { cells: Vec::new(), extra: serde_json::Map::new(), header: None };
         let mut r = Rendered::build(&nb, None, Default::default());
         for (name, theme) in ThemeSet::load_defaults().themes {
             let bg = theme.settings.background.map(|c| Color::Rgb(c.r, c.g, c.b));
@@ -3121,21 +2768,11 @@ mod tests {
         let flags: Vec<(String, bool)> = line
             .spans
             .iter()
-            .map(|s| {
-                (
-                    s.content.to_string(),
-                    s.style.add_modifier.contains(Modifier::REVERSED),
-                )
-            })
+            .map(|s| (s.content.to_string(), s.style.add_modifier.contains(Modifier::REVERSED)))
             .collect();
         assert_eq!(
             flags,
-            [
-                ("ab".into(), false),
-                ("c".into(), true),
-                ("de".into(), true),
-                ("f".into(), false)
-            ]
+            [("ab".into(), false), ("c".into(), true), ("de".into(), true), ("f".into(), false)]
         );
         // empty line inside a linewise selection still shows a mark
         let mut empty = Line::raw("");
@@ -3146,9 +2783,7 @@ mod tests {
     #[test]
     fn try_image_steps() {
         let b64: String = PNG.split_whitespace().collect();
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .expect("b64 decode");
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).expect("b64 decode");
         let img = image::load_from_memory(&bytes).expect("png load");
         assert_eq!((img.width(), img.height()), (1, 1));
     }
@@ -3163,11 +2798,7 @@ mod tests {
             "metadata": {}
         }))
         .unwrap();
-        let nb = Notebook {
-            cells: vec![cell],
-            extra: serde_json::Map::new(),
-            header: None,
-        };
+        let nb = Notebook { cells: vec![cell], extra: serde_json::Map::new(), header: None };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
         let mut r = Rendered::build(&nb, Some(picker), Default::default());
         r.ensure(0, &nb.cells[0]);
@@ -3186,30 +2817,20 @@ mod tests {
 
     #[test]
     fn tall_images_prescale_to_row_cap_preserving_aspect() {
-        let nb = Notebook {
-            cells: vec![],
-            extra: serde_json::Map::new(),
-            header: None,
-        };
+        let nb = Notebook { cells: vec![], extra: serde_json::Map::new(), header: None };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
         let r = Rendered::build(&nb, Some(picker), Default::default());
         // 640x480 > 18*16=288 px tall -> prescaled to exactly the cap
-        let entry = r
-            .image_entry(image::DynamicImage::new_rgba8(640, 480), false)
-            .unwrap();
+        let entry = r.image_entry(image::DynamicImage::new_rgba8(640, 480), false).unwrap();
         assert_eq!(entry.rows, max_image_rows());
         assert_eq!(entry.cols, 48); // 640 * 288/480 = 384 px / 8 px per col
 
         // small image: untouched, ceil to cells
-        let entry = r
-            .image_entry(image::DynamicImage::new_rgba8(100, 100), false)
-            .unwrap();
+        let entry = r.image_entry(image::DynamicImage::new_rgba8(100, 100), false).unwrap();
         assert_eq!((entry.cols, entry.rows), (13, 7));
 
         // native-size toggle: no prescale, full 480 px = 30 rows
-        let entry = r
-            .image_entry(image::DynamicImage::new_rgba8(640, 480), true)
-            .unwrap();
+        let entry = r.image_entry(image::DynamicImage::new_rgba8(640, 480), true).unwrap();
         assert_eq!((entry.cols, entry.rows), (80, 30));
     }
 
@@ -3221,20 +2842,13 @@ mod tests {
             "source": "on the $\\tau$ grid, and $ \\int_0^\\infty \\frac{1}{x^2} $ too\n## Read off $\\tau_\\mathrm{int}$"
         }))
         .unwrap();
-        let nb = Notebook {
-            cells: vec![cell],
-            extra: serde_json::Map::new(),
-            header: None,
-        };
+        let nb = Notebook { cells: vec![cell], extra: serde_json::Map::new(), header: None };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
         let mut r = Rendered::build(&nb, Some(picker), Default::default());
         r.ensure(0, &nb.cells[0]);
         let block = &r.blocks[0];
         assert_eq!(block.images.len(), 3, "heading math renders too");
-        assert_eq!(
-            (block.images[2].line, block.images[2].col),
-            (1, "Read off ".len() as u16)
-        );
+        assert_eq!((block.images[2].line, block.images[2].col), (1, "Read off ".len() as u16));
         // ALL inline math is exactly one row; too small => author uses $$
         assert!(block.images.iter().all(|i| i.rows == 1));
         assert_eq!(block.images[0].col, "on the ".len() as u16);
@@ -3243,30 +2857,20 @@ mod tests {
 
     #[test]
     fn long_output_windows_scrolls_and_collapses() {
-        let text: String = (0..40)
-            .map(|i| format!("l{i}"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let text: String = (0..40).map(|i| format!("l{i}")).collect::<Vec<_>>().join("\n");
         let cell: Cell = serde_json::from_value(serde_json::json!({
             "cell_type": "code", "source": "x", "metadata": {},
             "outputs": [{"output_type": "stream", "name": "stdout", "text": text}]
         }))
         .unwrap();
-        let nb = Notebook {
-            cells: vec![cell],
-            extra: serde_json::Map::new(),
-            header: None,
-        };
+        let nb = Notebook { cells: vec![cell], extra: serde_json::Map::new(), header: None };
         let mut r = Rendered::build(&nb, None, Default::default());
         r.ensure(0, &nb.cells[0]);
         let b = &mut r.blocks[0];
         let len = b.out_len();
         assert!(len > max_output_rows());
         // default follows the tail
-        assert_eq!(
-            b.window(),
-            (len - max_output_rows(), max_output_rows(), true)
-        );
+        assert_eq!(b.window(), (len - max_output_rows(), max_output_rows(), true));
         b.scroll_output(-5);
         assert_eq!(b.win_start(), len - max_output_rows() - 5);
         b.scroll_output(100); // clamped and re-pinned to the tail
@@ -3278,17 +2882,11 @@ mod tests {
 
     #[test]
     fn images_never_force_an_output_viewport() {
-        let nb = Notebook {
-            cells: vec![],
-            extra: serde_json::Map::new(),
-            header: None,
-        };
+        let nb = Notebook { cells: vec![], extra: serde_json::Map::new(), header: None };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
         let r = Rendered::build(&nb, Some(picker), Default::default());
         // a full-size plot: 18 reserved rows, above the 15-row text budget
-        let entry = r
-            .image_entry(image::DynamicImage::new_rgba8(640, 480), false)
-            .unwrap();
+        let entry = r.image_entry(image::DynamicImage::new_rgba8(640, 480), false).unwrap();
         let rows = entry.rows as usize;
         let mut block = CellBlock {
             lines: vec![Line::raw(""); 1 + rows + 1], // source + image + one text line
@@ -3320,15 +2918,8 @@ mod tests {
             }))
             .unwrap();
             let mut extra = serde_json::Map::new();
-            extra.insert(
-                "metadata".into(),
-                serde_json::json!({"kernelspec": {"language": lang}}),
-            );
-            let nb = Notebook {
-                cells: vec![cell],
-                extra,
-                header: None,
-            };
+            extra.insert("metadata".into(), serde_json::json!({"kernelspec": {"language": lang}}));
+            let nb = Notebook { cells: vec![cell], extra, header: None };
             let r = Rendered::build(&nb, None, Default::default());
             assert!(r.ps.find_syntax_by_token(lang).is_some(), "{lang}");
             assert_eq!(r.edit_suffix(&nb.cells[0]), ext, "{lang}");
@@ -3345,21 +2936,12 @@ mod tests {
                 "outputs": [{"output_type": "execute_result", "metadata": {}, "data": data}]
             }))
             .unwrap();
-            let nb = Notebook {
-                cells: vec![cell],
-                extra: serde_json::Map::new(),
-                header: None,
-            };
+            let nb = Notebook { cells: vec![cell], extra: serde_json::Map::new(), header: None };
             let mut r = Rendered::build(&nb, None, Default::default());
             r.ensure(0, &nb.cells[0]);
             let lines = r.blocks[0].lines.iter();
             lines
-                .map(|l| {
-                    l.spans
-                        .iter()
-                        .map(|s| s.content.as_ref())
-                        .collect::<String>()
-                })
+                .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
                 .collect::<Vec<_>>()
                 .join("\n")
         };
@@ -3379,11 +2961,7 @@ mod tests {
     fn markdown_click_map_points_at_source_lines() {
         let src = "# title\n\ntext\n| a |\n|---|\n| 1 |\nafter";
         let (_, _, map) = {
-            let nb = Notebook {
-                cells: vec![],
-                extra: serde_json::Map::new(),
-                header: None,
-            };
+            let nb = Notebook { cells: vec![], extra: serde_json::Map::new(), header: None };
             let r = Rendered::build(&nb, None, Default::default());
             r.render_markdown(src, None, false)
         };
@@ -3398,11 +2976,7 @@ mod tests {
             "cell_type": "markdown", "metadata": {}, "source": src
         }))
         .unwrap();
-        let nb = Notebook {
-            cells: vec![cell],
-            extra: serde_json::Map::new(),
-            header: None,
-        };
+        let nb = Notebook { cells: vec![cell], extra: serde_json::Map::new(), header: None };
         let mut r = Rendered::build(&nb, None, Default::default());
         r.ensure(0, &nb.cells[0]);
         let text: Vec<String> = r.blocks[0]
@@ -3410,11 +2984,7 @@ mod tests {
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect();
-        assert!(
-            text[0].contains("docs") && text[0].contains("⟨https://x.y⟩"),
-            "{}",
-            text[0]
-        );
+        assert!(text[0].contains("docs") && text[0].contains("⟨https://x.y⟩"), "{}", text[0]);
         assert!(text[0].contains("bold") && text[0].contains("it") && !text[0].contains('*'));
         assert!(text[1].contains(" a ") && text[1].contains('│'));
         assert!(text[2].contains('┼'));
@@ -3424,43 +2994,26 @@ mod tests {
     fn buffer_rows(term: &ratatui::Terminal<ratatui::backend::TestBackend>) -> Vec<String> {
         let buf = term.backend().buffer();
         (0..buf.area.height)
-            .map(|y| {
-                (0..buf.area.width)
-                    .map(|x| buf[(x, y)].symbol())
-                    .collect::<String>()
-            })
+            .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
             .collect()
     }
 
     #[test]
     fn wrap_breaks_at_spaces_hard_breaks_long_words_and_keeps_nbsp() {
         let text = |w: &Wrapped| -> Vec<String> {
-            w.rows
-                .iter()
-                .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
-                .collect()
+            w.rows.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect()).collect()
         };
         let red = Style::new().fg(Color::Red);
         let line = Line::from(vec![Span::raw("aaa bbb "), Span::styled("ccc", red)]);
         let w = wrap_lines(std::slice::from_ref(&line), 8);
         assert_eq!(text(&w), ["aaa bbb ", "ccc"]);
         assert_eq!(w.rows[1].spans[0].style, red, "styles survive the split");
-        assert_eq!(
-            w.origin[1],
-            RowOrigin {
-                line: 0,
-                col: 8,
-                x: 8
-            }
-        );
+        assert_eq!(w.origin[1], RowOrigin { line: 0, col: 8, x: 8 });
         // unwrapped when it fits, or with width 0
         assert_eq!(wrap_lines(std::slice::from_ref(&line), 11).rows.len(), 1);
         assert_eq!(wrap_lines(&[line], 0).rows.len(), 1);
         // a word longer than the row hard-breaks
-        assert_eq!(
-            text(&wrap_lines(&[Line::raw("abcdefghij")], 4)),
-            ["abcd", "efgh", "ij"]
-        );
+        assert_eq!(text(&wrap_lines(&[Line::raw("abcdefghij")], 4)), ["abcd", "efgh", "ij"]);
         // NBSP-reserved inline math moves whole to the next row
         let math = format!("ab {}", "\u{a0}".repeat(4));
         let w = wrap_lines(&[Line::raw(math)], 5);
@@ -3494,11 +3047,7 @@ mod tests {
             c.push_for_test(
                 &name,
                 if i % 2 == 0 { "function" } else { "instance" },
-                if i % 2 == 0 {
-                    "(start, stop, num=50)"
-                } else {
-                    "int"
-                },
+                if i % 2 == 0 { "(start, stop, num=50)" } else { "int" },
             );
         }
         c.sel = 13; // scrolled past the first window
@@ -3510,22 +3059,14 @@ mod tests {
         if std::env::var_os("JOTTER_SHOW").is_some() {
             println!("{}", rows.join("\n"));
         }
-        let pop: Vec<&String> = rows
-            .iter()
-            .filter(|r| r.contains("Function") || r.contains("Variable"))
-            .collect();
+        let pop: Vec<&String> =
+            rows.iter().filter(|r| r.contains("Function") || r.contains("Variable")).collect();
         assert_eq!(pop.len(), 12, "12-row window");
         // text column starts under the token after `np.` ("▌ x = np." = 9 cols)
         let col = |r: &str, pat: &str| r.find(pat).map(|b| r[..b].chars().count());
-        assert!(
-            pop.iter().all(|r| col(r, "li").is_some_and(|c| c == 9)),
-            "{pop:#?}"
-        );
+        assert!(pop.iter().all(|r| col(r, "li").is_some_and(|c| c == 9)), "{pop:#?}");
         let kind_col = col(pop[0], "Variable").or(col(pop[0], "Function"));
-        assert!(
-            pop.iter()
-                .all(|r| col(r, "Variable").or(col(r, "Function")) == kind_col)
-        );
+        assert!(pop.iter().all(|r| col(r, "Variable").or(col(r, "Function")) == kind_col));
         assert!(pop.iter().any(|r| r.contains("li13")), "selection visible");
     }
 
@@ -3550,10 +3091,7 @@ mod tests {
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 10)).unwrap();
         terminal.draw(|f| draw(f, &mut app, &mut rendered)).unwrap();
         let rows = buffer_rows(&terminal);
-        let code = rows
-            .iter()
-            .position(|r| r.contains("x = np.std(a,"))
-            .unwrap();
+        let code = rows.iter().position(|r| r.contains("x = np.std(a,")).unwrap();
         let pop = &rows[code + 1];
         assert!(pop.contains("np.std(a, axis=None, ddof=0)"), "{rows:#?}");
         // its text starts under the callee
@@ -3587,10 +3125,7 @@ mod tests {
         let spans = show_tabs("\tx = 1", Style::new());
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "→x = 1", "one visible column per tab");
-        assert_eq!(
-            expand_tabs("a\tb\n\x1b[31mab\tc"),
-            "a       b\n\x1b[31mab      c"
-        );
+        assert_eq!(expand_tabs("a\tb\n\x1b[31mab\tc"), "a       b\n\x1b[31mab      c");
     }
 
     #[test]
@@ -3609,16 +3144,10 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 12)).unwrap();
         terminal.draw(|f| draw(f, &mut app, &mut rendered)).unwrap();
-        let words: usize = buffer_rows(&terminal)
-            .iter()
-            .map(|r| r.matches("word").count())
-            .sum();
+        let words: usize = buffer_rows(&terminal).iter().map(|r| r.matches("word").count()).sum();
         assert_eq!(words, 30, "every word visible across wrapped rows");
         // clicks on a continuation row map back to the one source line
-        assert!(matches!(
-            app.hit[2].kind,
-            crate::app::HitKind::Source { line: 0, .. }
-        ));
+        assert!(matches!(app.hit[2].kind, crate::app::HitKind::Source { line: 0, .. }));
     }
 
     #[test]
@@ -3689,10 +3218,7 @@ mod tests {
         assert!(all.contains("line-29"), "tail visible:\n{all}");
         assert!(!all.contains("line-0 "), "head clipped:\n{all}");
         assert!(all.contains("··· output"), "footer present:\n{all}");
-        assert!(
-            all.contains(" markdown  ─") && all.contains("Big Title"),
-            "{all}"
-        );
+        assert!(all.contains(" markdown  ─") && all.contains("Big Title"), "{all}");
         assert!(rows[29].contains("cell 1/2"), "status line: {}", rows[29]);
         // hit map is window-relative and covers the viewport
         assert!(matches!(app.hit[0].kind, crate::app::HitKind::Other));
@@ -3725,11 +3251,7 @@ mod tests {
         .into_iter()
         .map(|v| serde_json::from_value(v).unwrap())
         .collect();
-        let nb = Notebook {
-            cells,
-            extra: serde_json::Map::new(),
-            header: None,
-        };
+        let nb = Notebook { cells, extra: serde_json::Map::new(), header: None };
         let picker = Picker::from_fontsize(FontSize::new(8, 16));
         for p in [Some(picker), None] {
             let mut r = Rendered::build(&nb, p, Default::default());
@@ -3796,10 +3318,7 @@ mod tests {
         // a math cell above the view gets its exact height: the screen stays put
         app.manual_scroll = true;
         let before = draw_rows(&mut app, &mut rendered);
-        let above = (0..299)
-            .rev()
-            .find(|&i| i % 2 == 0 && !rendered.blocks[i].rendered)
-            .unwrap();
+        let above = (0..299).rev().find(|&i| i % 2 == 0 && !rendered.blocks[i].rendered).unwrap();
         let est = rendered.blocks[above].rows;
         rendered.ensure(above, &app.notebook.cells[above]);
         assert_ne!(rendered.blocks[above].rows, est, "the estimate was off");
@@ -3816,11 +3335,7 @@ mod tests {
             "source": "# Title\n- item\ncall `f(x)` on $\\tau$\n$$E = \\hbar \\omega^2$$"
         }))
         .unwrap();
-        let nb = Notebook {
-            cells: vec![cell],
-            extra: serde_json::Map::new(),
-            header: None,
-        };
+        let nb = Notebook { cells: vec![cell], extra: serde_json::Map::new(), header: None };
         let mut r = Rendered::build(&nb, None, Default::default()); // no graphics -> math becomes unicode approx
         r.ensure(0, &nb.cells[0]);
         let text: Vec<String> = r.blocks[0]
@@ -3877,21 +3392,14 @@ mod tests {
         // this one, so allow their share without letting a re-render per
         // sweep (3 sweeps x 70 cells) through
         let renders = RENDERS.load(Relaxed) - before;
-        assert!(
-            renders < 2 * n,
-            "{renders} renders for {n} cells in 3 sweeps"
-        );
+        assert!(renders < 2 * n, "{renders} renders for {n} cells in 3 sweeps");
     }
 
     /// Over the budget, the least recently seen blocks go first, and only
     /// until the rest fits; the render window is never evicted.
     #[test]
     fn eviction_drops_least_recently_seen_until_within_budget() {
-        let nb = Notebook {
-            cells: Vec::new(),
-            extra: serde_json::Map::new(),
-            header: None,
-        };
+        let nb = Notebook { cells: Vec::new(), extra: serde_json::Map::new(), header: None };
         let mut r = Rendered::build(&nb, None, Default::default());
         // three blocks of ~31 MiB each (lines cost 256 bytes): 92 MiB > 64
         let big = |seen| {
@@ -3920,25 +3428,17 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = crate::app::App::open(path.clone(), None, tx).unwrap();
         std::fs::remove_file(&path).ok();
-        app.prompt = Some(crate::app::Prompt {
-            kind: crate::app::PromptKind::Command,
-            buf: "wq".into(),
-        });
+        app.prompt =
+            Some(crate::app::Prompt { kind: crate::app::PromptKind::Command, buf: "wq".into() });
         let mut rendered = Rendered::build(&app.notebook, None, Default::default());
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 20)).unwrap();
         terminal.draw(|f| draw(f, &mut app, &mut rendered)).unwrap();
         let rows = buffer_rows(&terminal);
-        let top = rows
-            .iter()
-            .position(|r| r.contains("─ Cmdline ─"))
-            .expect("title");
+        let top = rows.iter().position(|r| r.contains("─ Cmdline ─")).expect("title");
         assert!(rows[top].trim_start().starts_with('╭'));
         assert!(rows[top + 1].contains("│ › wq"), "{}", rows[top + 1]);
-        assert!(
-            !rows.last().unwrap().contains("wq"),
-            "not echoed in the status line"
-        );
+        assert!(!rows.last().unwrap().contains("wq"), "not echoed in the status line");
     }
 
     #[test]
@@ -4005,11 +3505,7 @@ mod tests {
         assert_eq!(row_of_c15(&mut app, "zt"), 1, "header on the top row");
         assert_eq!(row_of_c15(&mut app, "zb"), 11, "source on the bottom row");
         assert_eq!(row_of_c15(&mut app, "zz"), 6, "middle");
-        assert_eq!(
-            row_of_c15(&mut app, "j"),
-            6,
-            "the view stays until it must move"
-        );
+        assert_eq!(row_of_c15(&mut app, "j"), 6, "the view stays until it must move");
     }
 
     #[test]
@@ -4025,12 +3521,7 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = crate::app::App::open(path.clone(), None, tx).unwrap();
         std::fs::remove_file(&path).ok();
-        let id = |i: usize| {
-            app.notebook.cells[i].extra["id"]
-                .as_str()
-                .unwrap()
-                .to_string()
-        };
+        let id = |i: usize| app.notebook.cells[i].extra["id"].as_str().unwrap().to_string();
         let (a, b) = (id(2), id(0));
         app.marks.insert('a', a);
         app.marks.insert('b', b);
@@ -4042,20 +3533,10 @@ mod tests {
         if std::env::var_os("JOTTER_SHOW").is_some() {
             println!("{}", rows.join("\n"));
         }
-        assert!(
-            rows[0].contains("In [ ]  'b") && rows[0].contains("Marks"),
-            "{}",
-            rows[0]
-        );
+        assert!(rows[0].contains("In [ ]  'b") && rows[0].contains("Marks"), "{}", rows[0]);
         // sidebar in notebook order: b (cell 1) before a (cell 3)
-        let b_row = rows
-            .iter()
-            .position(|r| r.contains(" 'b 1 import numpy"))
-            .unwrap();
-        let a_row = rows
-            .iter()
-            .position(|r| r.contains(" 'a 3 plot(x)"))
-            .unwrap();
+        let b_row = rows.iter().position(|r| r.contains(" 'b 1 import numpy")).unwrap();
+        let a_row = rows.iter().position(|r| r.contains(" 'a 3 plot(x)")).unwrap();
         assert!(b_row < a_row);
         // too narrow: no sidebar, headers still carry the letters
         let mut terminal =

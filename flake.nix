@@ -35,6 +35,11 @@
         default = pkgs.mkShell {
           packages = with pkgs; [ rustc cargo clippy rustfmt rust-analyzer ];
         };
+        # `make fmt` and CI: rustfmt.toml sets nightly-only options, which a stable
+        # rustfmt ignores with a warning
+        fmt = pkgs.mkShell {
+          packages = with pkgs; [ cargo (rustfmt.override { asNightly = true; }) ];
+        };
       } // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         # `nix develop .#docs`: the docs site and its media recording rig
         # (docs/media/record.nu). Everything a recording depends on is pinned

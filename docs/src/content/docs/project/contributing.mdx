@@ -24,10 +24,12 @@ cargo run -- showcase.ipynb
 CI runs these on every pull request; run them before you push:
 
 ```sh
-cargo fmt --check
+nix develop .#fmt -c cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 ```
+
+`rustfmt.toml` uses options that only a nightly rustfmt accepts; the `fmt` shell in `flake.nix` pins one, and `make fmt` formats with it. Without Nix, `cargo +nightly fmt` does the same, though a different nightly may format slightly differently.
 
 A few tests need a real kernel or Neovim and are marked `#[ignore]`. Run them with `cargo test -- --ignored`.
 

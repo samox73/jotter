@@ -1,4 +1,4 @@
-.PHONY: install check test lint ci record bench docs-dev docs-build
+.PHONY: install check test fmt lint ci record bench docs-dev docs-build
 
 # scenes to record (default: all), e.g. make record SCENES="hero plots"
 SCENES ?=
@@ -14,8 +14,12 @@ check:
 test:
 	cargo test
 
+# format with every option in rustfmt.toml (some need a nightly rustfmt)
+fmt:
+	nix develop .#fmt -c cargo fmt
+
 lint:
-	cargo fmt --check
+	nix develop .#fmt -c cargo fmt --check
 	cargo clippy --all-targets -- -D warnings
 
 # what CI runs

@@ -1,9 +1,9 @@
 //! `~/.config/jotter/config.toml`, read once at startup into a global.
 //! Every field is optional; missing file means defaults.
 
+use std::{path::PathBuf, sync::OnceLock};
+
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::sync::OnceLock;
 
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(default, deny_unknown_fields)]
@@ -11,33 +11,67 @@ pub struct Config {
     // These doc comments are the user documentation: `jotter --generate`
     // turns them into the docs site's configuration reference (markdown;
     // an empty `///` line starts a new paragraph).
-    /// Images taller than this many terminal rows are scaled down to fit, once, when the output is first shown. Larger values show plots bigger but push the next cell further down.
+    /// Images taller than this many terminal rows are scaled down to fit, once, when the output is
+    /// first shown. Larger values show plots bigger but push the next cell further down.
     pub max_image_rows: u16,
-    /// Display math taller than this many terminal rows is scaled down to fit: `$$…$$` in markdown, latex cells, and LaTeX outputs such as SymPy's. Inline `$…$` math always takes one row. See [math](/jotter/guides/math/).
+    /// Display math taller than this many terminal rows is scaled down to fit: `$$…$$` in
+    /// markdown, latex cells, and LaTeX outputs such as SymPy's. Inline `$…$` math always takes
+    /// one row. See [math](/jotter/guides/math/).
     pub max_math_rows: u16,
-    /// Outputs taller than this many rows are shown in a scrollable viewport instead of in full. Scroll it with `[` and `]` or the mouse wheel; see [long outputs](/jotter/guides/outputs/#long-outputs).
+    /// Outputs taller than this many rows are shown in a scrollable viewport instead of in full.
+    /// Scroll it with `[` and `]` or the mouse wheel; see [long
+    /// outputs](/jotter/guides/outputs/#long-outputs).
     pub max_output_rows: usize,
-    /// How often, in seconds, jOtter writes an autosave when there are unsaved changes. Autosaves go to `~/.local/state/jotter/autosave/`, never next to the notebook; see [data safety](/jotter/guides/data-safety/#autosave-and-recovery). Values below 1 count as 1.
+    /// How often, in seconds, jOtter writes an autosave when there are unsaved changes. Autosaves
+    /// go to `~/.local/state/jotter/autosave/`, never next to the notebook; see [data
+    /// safety](/jotter/guides/data-safety/#autosave-and-recovery). Values below 1 count as 1.
     pub autosave_secs: u64,
-    /// The syntax-highlighting theme for code cells and fenced code in markdown. One of `base16-ocean.dark`, `base16-ocean.light`, `base16-eighties.dark`, `base16-mocha.dark`, `InspiredGitHub`, `Solarized (dark)` or `Solarized (light)`.
+    /// The syntax-highlighting theme for code cells and fenced code in markdown. One of
+    /// `base16-ocean.dark`, `base16-ocean.light`, `base16-eighties.dark`, `base16-mocha.dark`,
+    /// `InspiredGitHub`, `Solarized (dark)` or `Solarized (light)`.
     ///
-    /// On a light terminal background, use `base16-ocean.light`, `InspiredGitHub` or `Solarized (light)`. See them all in the [theme gallery](/jotter/reference/themes/).
+    /// On a light terminal background, use `base16-ocean.light`, `InspiredGitHub` or `Solarized
+    /// (light)`. See them all in the [theme gallery](/jotter/reference/themes/).
     pub theme: String,
-    /// The cell editor: `"builtin"`, jOtter's own vim-style editor, or `"nvim"`, an embedded Neovim with your config and plugins that gives you the full Neovim editing model. The Neovim backend is experimental; see [embedded Neovim](/jotter/guides/neovim/). If Neovim is missing or crashes, jOtter falls back to the builtin editor.
+    /// The cell editor: `"builtin"`, jOtter's own vim-style editor, or `"nvim"`, an embedded
+    /// Neovim with your config and plugins that gives you the full Neovim editing model. The
+    /// Neovim backend is experimental; see [embedded Neovim](/jotter/guides/neovim/). If Neovim is
+    /// missing or crashes, jOtter falls back to the builtin editor.
     pub editor: String,
-    /// With `editor = "nvim"`: load your Neovim config and plugins. jOtter sets `g:jotter = 1` before your config runs, so you can skip plugins that make no sense inside a cell. Set to `false` for a clean Neovim (`-u NONE`).
+    /// With `editor = "nvim"`: load your Neovim config and plugins. jOtter sets `g:jotter = 1`
+    /// before your config runs, so you can skip plugins that make no sense inside a cell. Set to
+    /// `false` for a clean Neovim (`-u NONE`).
     pub nvim_user_config: bool,
-    /// Python kernels: use IPython's Jedi completer for every completion. Jedi completes names from code that hasn't run yet, but is slow. When `false`, jOtter uses IPython's fast completer and asks Jedi only when the fast one finds nothing; see [completion](/jotter/guides/completion/#where-completions-come-from-python).
+    /// Python kernels: use IPython's Jedi completer for every completion. Jedi completes names
+    /// from code that hasn't run yet, but is slow. When `false`, jOtter uses IPython's fast
+    /// completer and asks Jedi only when the fast one finds nothing; see
+    /// [completion](/jotter/guides/completion/#where-completions-come-from-python).
     pub jedi: bool,
-    /// Open completion automatically when you type `.` after a name. When `false`, completion opens only with `Tab`.
+    /// Open completion automatically when you type `.` after a name. When `false`, completion
+    /// opens only with `Tab`.
     pub complete_on_dot: bool,
-    /// Show the signature of the function you are calling, in a popup under the line, with the argument you are typing highlighted. It opens when you type `(` after a name and follows the cursor through the call. The kernel only knows functions that exist, so a function from a cell that hasn't run shows nothing. See [completion](/jotter/guides/completion/#signature-help).
+    /// Show the signature of the function you are calling, in a popup under the line, with the
+    /// argument you are typing highlighted. It opens when you type `(` after a name and follows
+    /// the cursor through the call. The kernel only knows functions that exist, so a function from
+    /// a cell that hasn't run shows nothing. See
+    /// [completion](/jotter/guides/completion/#signature-help).
     pub signature_help: bool,
-    /// Show plots in your terminal's colours: a figure's white background becomes the terminal background and black text and axes become the terminal foreground, while coloured lines keep their hue. Only the display changes; the notebook, its saved outputs and files written with `savefig` keep their original colours. It applies to images with a large white background and no transparency, so photos and figures you styled yourself are left alone. See [outputs](/jotter/guides/outputs/#plots-in-your-terminals-colours).
+    /// Show plots in your terminal's colours: a figure's white background becomes the terminal
+    /// background and black text and axes become the terminal foreground, while coloured lines
+    /// keep their hue. Only the display changes; the notebook, its saved outputs and files written
+    /// with `savefig` keep their original colours. It applies to images with a large white
+    /// background and no transparency, so photos and figures you styled yourself are left alone.
+    /// See [outputs](/jotter/guides/outputs/#plots-in-your-terminals-colours).
     pub recolor_plots: bool,
-    /// The command that formats a code cell with `f` (or every code cell with `F`). It gets the cell's source on standard input and must print the formatted source on standard output. It runs through `sh` in the notebook's directory, so pipelines such as `isort - | black -q -` work and your project's formatter settings (`pyproject.toml`, `ruff.toml`) apply. If it fails, for example on a syntax error, the cell is left as it was. See [formatting](/jotter/guides/formatting/) for commands for other formatters and languages.
+    /// The command that formats a code cell with `f` (or every code cell with `F`). It gets the
+    /// cell's source on standard input and must print the formatted source on standard output. It
+    /// runs through `sh` in the notebook's directory, so pipelines such as `isort - | black -q -`
+    /// work and your project's formatter settings (`pyproject.toml`, `ruff.toml`) apply. If it
+    /// fails, for example on a syntax error, the cell is left as it was. See
+    /// [formatting](/jotter/guides/formatting/) for commands for other formatters and languages.
     pub formatter: String,
-    /// Format every code cell with `formatter` each time you save with `w`, `W` or `:w`. Autosaves don't format.
+    /// Format every code cell with `formatter` each time you save with `w`, `W` or `:w`. Autosaves
+    /// don't format.
     pub format_on_save: bool,
 }
 

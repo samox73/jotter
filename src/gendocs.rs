@@ -3,11 +3,12 @@
 //! and shell completions. docs.yml and release.yml run it, so the published
 //! reference can't drift from the code.
 
-use crate::config::Config;
+use std::{fmt::Write as _, path::Path};
+
 use anyhow::Result;
 use clap_complete::Shell;
-use std::fmt::Write as _;
-use std::path::Path;
+
+use crate::config::Config;
 
 pub fn generate(mut cmd: clap::Command, dir: &Path) -> Result<()> {
     std::fs::create_dir_all(dir.join("man"))?;
@@ -21,12 +22,7 @@ pub fn generate(mut cmd: clap::Command, dir: &Path) -> Result<()> {
     for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
         clap_complete::generate_to(shell, &mut cmd, "jotter", &completions)?;
     }
-    clap_complete::generate_to(
-        clap_complete_nushell::Nushell,
-        &mut cmd,
-        "jotter",
-        &completions,
-    )?;
+    clap_complete::generate_to(clap_complete_nushell::Nushell, &mut cmd, "jotter", &completions)?;
     Ok(())
 }
 
@@ -39,10 +35,7 @@ fn page(title: &str, description: &str, slug: &str, source: &str) -> String {
 
 /// `"j k"` → `` `j` `k` ``: HELP keys are space-separated chords.
 fn chords(keys: &str) -> String {
-    keys.split(' ')
-        .map(|k| format!("`{k}`"))
-        .collect::<Vec<_>>()
-        .join(" ")
+    keys.split(' ').map(|k| format!("`{k}`")).collect::<Vec<_>>().join(" ")
 }
 
 fn keybindings() -> String {
@@ -106,14 +99,8 @@ fn configuration() -> String {
             "String" => "string",
             _ => "integer",
         };
-        let default = defaults
-            .get(name)
-            .map(|v| v.to_string())
-            .unwrap_or_default();
-        let _ = write!(
-            s,
-            "\n### `{name}`\n\n**Type:** {ty} · **Default:** `{default}`\n\n{doc}\n"
-        );
+        let default = defaults.get(name).map(|v| v.to_string()).unwrap_or_default();
+        let _ = write!(s, "\n### `{name}`\n\n**Type:** {ty} · **Default:** `{default}`\n\n{doc}\n");
     }
     s
 }
@@ -158,10 +145,7 @@ mod tests {
         let fields = config_fields();
         let mut names: Vec<_> = fields.iter().map(|f| f.0).collect();
         names.sort_unstable(); // Table is a BTreeMap
-        assert_eq!(
-            names,
-            defaults.keys().map(String::as_str).collect::<Vec<_>>()
-        );
+        assert_eq!(names, defaults.keys().map(String::as_str).collect::<Vec<_>>());
         for (name, _, doc) in fields {
             assert!(!doc.is_empty(), "config field `{name}` has no doc comment");
         }

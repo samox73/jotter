@@ -12,8 +12,9 @@
 //! (<https://github.com/mwouts/jupytext>); the notice is in
 //! `licenses/jupytext-MIT.txt`.
 
-use crate::notebook::{Cell, Notebook, new_cell_id};
 use serde_json::{Map, Value};
+
+use crate::notebook::{Cell, Notebook, new_cell_id};
 
 /// Cell metadata jupytext leaves out of the text form (`_IGNORE_CELL_METADATA`):
 /// frontend state, and its own layout keys (which still steer the layout).
@@ -51,11 +52,7 @@ pub fn read(text: &str) -> Notebook {
     extra.insert("metadata".into(), Value::Object(metadata));
     extra.insert("nbformat".into(), 4.into());
     extra.insert("nbformat_minor".into(), 5.into());
-    Notebook {
-        cells,
-        extra,
-        header,
-    }
+    Notebook { cells, extra, header }
 }
 
 pub fn write(nb: &Notebook) -> String {
@@ -72,10 +69,7 @@ pub fn write(nb: &Notebook) -> String {
         let n = cell_metadata(cell)
             .get("lines_to_next_cell")
             .and_then(Value::as_u64)
-            .map_or_else(
-                || pep8_lines_between(&refs(&text), &refs(&lines)),
-                |n| n as usize,
-            );
+            .map_or_else(|| pep8_lines_between(&refs(&text), &refs(&lines)), |n| n as usize);
         text.extend(std::iter::repeat_n(String::new(), n));
         text.append(&mut lines);
         lines = text;
@@ -98,10 +92,7 @@ fn split_header(lines: &[&str]) -> (Option<String>, usize) {
     if lines.first().is_some_and(|l| l.starts_with("#!")) {
         end += 1;
     }
-    if lines
-        .get(end)
-        .is_some_and(|l| l.starts_with('#') && l.contains("coding"))
-    {
+    if lines.get(end).is_some_and(|l| l.starts_with('#') && l.contains("coding")) {
         end += 1;
     }
     if lines.get(end).is_some_and(is_rule)
@@ -156,9 +147,7 @@ fn header_kernelspec(header: &str) -> Option<Value> {
 
 /// Strip one `# ` (or `#`) like jupytext's `uncomment`.
 fn uncomment(line: &str) -> &str {
-    line.strip_prefix("# ")
-        .or_else(|| line.strip_prefix('#'))
-        .unwrap_or(line)
+    line.strip_prefix("# ").or_else(|| line.strip_prefix('#')).unwrap_or(line)
 }
 
 /// jupytext's `^\s*#\s*%%(%*)\s(.*)$` and `^\s*#\s*(%%|<codecell>|In\[[0-9 ]*\]:?)\s*$`:
@@ -218,18 +207,11 @@ fn read_cell(lines: &[&str]) -> (Cell, usize) {
     };
     let start = usize::from(marked);
     let raw = &lines[start..end.max(start)];
-    let (cell_type, mut metadata) = if marked {
-        parse_options(lines[0])
-    } else {
-        ("code", Map::new())
-    };
+    let (cell_type, mut metadata) =
+        if marked { parse_options(lines[0]) } else { ("code", Map::new()) };
     // like jupytext, remember the spacing only when it isn't what pep8 gives
     let total = lines.len();
-    let blank_after = if end < total {
-        next - end + usize::from(next >= total)
-    } else {
-        1
-    };
+    let blank_after = if end < total { next - end + usize::from(next >= total) } else { 1 };
     let expected = pep8_lines_between(if raw.is_empty() { &[""] } else { raw }, &lines[next..]);
     if blank_after != expected {
         metadata.insert("lines_to_next_cell".into(), blank_after.into());
@@ -273,11 +255,7 @@ fn parse_options(marker: &str) -> (&'static str, Map<String, Value>) {
     };
     let (mut title, mut meta) = text_to_metadata(&line[at + 2..]);
     let mut cell_type = "code";
-    for (tag, ty) in [
-        ("[markdown]", "markdown"),
-        ("[raw]", "raw"),
-        ("[md]", "markdown"),
-    ] {
+    for (tag, ty) in [("[markdown]", "markdown"), ("[raw]", "raw"), ("[md]", "markdown")] {
         if title.contains(tag) {
             title = title.replace(tag, "").trim().to_string();
             cell_type = ty;
@@ -324,10 +302,7 @@ fn text_to_metadata(text: &str) -> (String, Map<String, Value>) {
         }
         None => text.split(' ').collect(),
     };
-    while words
-        .last()
-        .is_some_and(|w| w.trim().is_empty() || w.starts_with('.'))
-    {
+    while words.last().is_some_and(|w| w.trim().is_empty() || w.starts_with('.')) {
         words.pop();
     }
     let title = words.join(" ");
@@ -382,23 +357,16 @@ fn incorrectly_encoded(text: &str) -> Map<String, Value> {
 /// `^[a-zA-Z_\.]+[a-zA-Z0-9_\.]*$`
 fn is_identifier(s: &str) -> bool {
     s.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_' || c == '.')
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
 }
 
 /// `^[a-zA-Z0-9_\.@/-]+$`
 fn is_valid_key(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || "_.@/-".contains(c))
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "_.@/-".contains(c))
 }
 
 fn cell_metadata(cell: &Cell) -> Map<String, Value> {
-    cell.extra
-        .get("metadata")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
+    cell.extra.get("metadata").and_then(Value::as_object).cloned().unwrap_or_default()
 }
 
 /// Cell metadata as the marker line carries it.
@@ -471,13 +439,9 @@ fn cell_to_text(cell: &Cell, marker: bool) -> Vec<String> {
         }
         lines.extend(src);
     } else {
-        lines.extend(source.iter().map(|l| {
-            if l.is_empty() {
-                "#".to_string()
-            } else {
-                format!("# {l}")
-            }
-        }));
+        lines.extend(
+            source.iter().map(|l| if l.is_empty() { "#".to_string() } else { format!("# {l}") }),
+        );
     }
     lines
 }
@@ -556,8 +520,7 @@ fn after_percents(s: &str) -> Option<&str> {
 
 /// `(.*)#\s*flag` after the magic: a `# escape` / `# noescape` override.
 fn has_flag(rest: &str, flag: &str) -> bool {
-    rest.match_indices('#')
-        .any(|(i, _)| rest[i + 1..].trim_start().starts_with(flag))
+    rest.match_indices('#').any(|(i, _)| rest[i + 1..].trim_start().starts_with(flag))
 }
 
 /// Is this line (possibly already commented) a Jupyter magic, to be
@@ -580,8 +543,7 @@ fn help_or_bash(line: &str) -> bool {
     let Some(r) = t.strip_prefix(['?', '!']) else {
         return false;
     };
-    r.trim_start()
-        .starts_with(|c: char| c.is_ascii_alphabetic() || ".~$\\/{}".contains(c))
+    r.trim_start().starts_with(|c: char| c.is_ascii_alphabetic() || ".~$\\/{}".contains(c))
 }
 
 /// `^(# |#)*\s*([a-zA-Z_][a-zA-Z_$0-9]*)\s*=\s*(%|%%|%%%|!)[a-zA-Z]`
@@ -590,17 +552,14 @@ fn magic_assign(line: &str) -> bool {
     if !s.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
         return false;
     }
-    let ident = s
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
-        .count();
+    let ident =
+        s.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$').count();
     let Some(r) = s[ident..].trim_start().strip_prefix('=') else {
         return false;
     };
     let r = r.trim_start();
     after_percents(r).is_some()
-        || r.strip_prefix('!')
-            .is_some_and(|x| x.starts_with(|c: char| c.is_ascii_alphabetic()))
+        || r.strip_prefix('!').is_some_and(|x| x.starts_with(|c: char| c.is_ascii_alphabetic()))
 }
 
 /// `^\s*(# )*[^\s]*\?\s*$`: IPython help, `obj?`.
@@ -800,9 +759,7 @@ fn ends_with_def(lines: &[&str]) -> bool {
 }
 
 fn ends_with_code(lines: &[&str]) -> bool {
-    lines
-        .last()
-        .is_some_and(|l| !l.trim().is_empty() && !l.starts_with('#'))
+    lines.last().is_some_and(|l| !l.trim().is_empty() && !l.starts_with('#'))
 }
 
 fn has_code(lines: &[&str]) -> bool {
@@ -855,10 +812,7 @@ mod tests {
     }
 
     fn sources(nb: &Notebook) -> Vec<(&str, &str)> {
-        nb.cells
-            .iter()
-            .map(|c| (c.cell_type.as_str(), c.source.as_str()))
-            .collect()
+        nb.cells.iter().map(|c| (c.cell_type.as_str(), c.source.as_str())).collect()
     }
 
     // Fixtures generated by jupytext itself (see the header for its version):
@@ -888,10 +842,7 @@ mod tests {
             .unwrap();
             let got = read(&fixture(py));
             assert_eq!(sources(&got), sources(&nb), "{py}");
-            assert_eq!(
-                got.extra["metadata"]["kernelspec"],
-                nb.extra["metadata"]["kernelspec"]
-            );
+            assert_eq!(got.extra["metadata"]["kernelspec"], nb.extra["metadata"]["kernelspec"]);
         }
     }
 
@@ -923,9 +874,7 @@ mod tests {
         ] {
             assert!(is_marker(m), "{m:?}");
         }
-        for m in [
-            "# %%time", "# %%%", "x = 1", "# % not", "#%%bash", "# In[a]:",
-        ] {
+        for m in ["# %%time", "# %%%", "x = 1", "# % not", "#%%bash", "# In[a]:"] {
             assert!(!is_marker(m), "{m:?}");
         }
     }
@@ -942,12 +891,7 @@ mod tests {
         assert_eq!((ty, &meta["format"]), ("raw", &"text/latex".into()));
         let (ty, meta) = parse_options("# %%% [md] sub");
         assert_eq!(
-            (
-                ty,
-                &meta["cell_depth"],
-                &meta["region_name"],
-                &meta["title"]
-            ),
+            (ty, &meta["cell_depth"], &meta["region_name"], &meta["title"]),
             ("markdown", &1.into(), &"md".into(), &"sub".into())
         );
         // an unparseable tail is kept whole, so nothing is lost
@@ -980,17 +924,8 @@ mod tests {
             "ls",
             "echo hi",
         ];
-        let not = [
-            "x = 1",
-            "# comment",
-            "ls = [1]",
-            "cd(x)",
-            "a ? b",
-            "%",
-            "%%",
-            "cat, dog",
-            "  # %%",
-        ];
+        let not =
+            ["x = 1", "# comment", "ls = [1]", "cd(x)", "a ? b", "%", "%%", "cat, dog", "  # %%"];
         for m in magic {
             assert!(is_magic(m), "{m:?}");
         }
@@ -1042,14 +977,8 @@ mod tests {
             assert_eq!(write(&nb), text, "{text:?}");
         }
         // a magic in a script is commented, as jupytext does, and read back
-        assert_eq!(
-            write(&read("%matplotlib inline\n")),
-            "# %matplotlib inline\n"
-        );
-        assert_eq!(
-            read("# %matplotlib inline\n").cells[0].source,
-            "%matplotlib inline"
-        );
+        assert_eq!(write(&read("%matplotlib inline\n")), "# %matplotlib inline\n");
+        assert_eq!(read("# %matplotlib inline\n").cells[0].source, "%matplotlib inline");
         // the whole script is one cell, magics and all
         assert_eq!(read("x = 1\nprint(x)\n").cells[0].source, "x = 1\nprint(x)");
         // a second cell brings the markers
@@ -1086,10 +1015,7 @@ mod tests {
         );
         assert_eq!(
             sources(&nb),
-            [
-                ("markdown", "# Title\n\n![img](x.png)\n  indented"),
-                ("raw", "raw")
-            ]
+            [("markdown", "# Title\n\n![img](x.png)\n  indented"), ("raw", "raw")]
         );
         assert!(nb.cells[0].outputs.is_none());
         assert_eq!(nb.cells[1].outputs, None);
@@ -1104,10 +1030,7 @@ mod tests {
         assert_eq!(nb.cells.len(), 4);
         assert_eq!(nb.cells[2].source, "s = \"\"\"\n# %%\n\"\"\"");
         assert!(
-            !nb.cells[0].extra["metadata"]
-                .as_object()
-                .unwrap()
-                .contains_key("lines_to_next_cell")
+            !nb.cells[0].extra["metadata"].as_object().unwrap().contains_key("lines_to_next_cell")
         );
         assert_eq!(write(&nb), text);
         // non-pep8 spacing is kept through the metadata
@@ -1148,11 +1071,7 @@ mod tests {
             .args(args)
             .output()
             .expect("jupytext on PATH");
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         String::from_utf8(out.stdout).unwrap()
     }
 
@@ -1171,61 +1090,37 @@ mod tests {
     fn cells_of(nb: &Notebook) -> Vec<(String, String, Value)> {
         nb.cells
             .iter()
-            .map(|c| {
-                (
-                    c.cell_type.clone(),
-                    c.source.clone(),
-                    c.extra["metadata"].clone(),
-                )
-            })
+            .map(|c| (c.cell_type.clone(), c.source.clone(), c.extra["metadata"].clone()))
             .collect()
     }
 
     const CORPUS: [(&str, &str); 20] = [
-        (
-            "options",
-            "# %% My title [markdown] tags=[\"a\", \"b\"] x=1 flag\n# hi\n\n# %%\nx\n",
-        ),
+        ("options", "# %% My title [markdown] tags=[\"a\", \"b\"] x=1 flag\n# hi\n\n# %%\nx\n"),
         ("plain", "x = 1\nprint(x)\n"),
         (
             "magics",
             "# %%\n# %matplotlib inline\nimport os\n\n# %%\n# %%time\nx = 1\n\n# %%\n# !ls -la\n# x?\n# ?x\n# y = !pwd\n# cd ..\n# ls\n# echo hi\n# %x \\\n#   continued\n%y # noescape\n# %z # escape\n# # %w\n# # !v\n",
         ),
-        (
-            "strings",
-            "# %%\ns = \"\"\"\n# %%\n%not magic\n\"\"\"\nt = '''# %%'''\n\n# %%\ny\n",
-        ),
+        ("strings", "# %%\ns = \"\"\"\n# %%\n%not magic\n\"\"\"\nt = '''# %%'''\n\n# %%\ny\n"),
         (
             "spacing",
             "# %%\nx = 1\n\n\n# %%\ndef f():\n    return 1\n\n\n# %%\nclass A:\n    pass\n\n# %% [markdown]\n# after class\n\n# %%\ny = 2\n# %%\nz = 3\n\n\n\n# %%\nw\n",
         ),
-        (
-            "indent",
-            "# %%\nif True:\n    pass\n\n    # %%\n    x = 1\n",
-        ),
+        ("indent", "# %%\nif True:\n    pass\n\n    # %%\n    x = 1\n"),
         (
             "markdown",
             "# %% [markdown]\n# # Title\n#\n# # %x\n# ![i](x.png)\n#   indented\n\n# %%\nz\n",
         ),
-        (
-            "rawjson",
-            "# %% [raw] {\"format\": \"text/latex\", \"k\": [1, 2]}\n# E\n\n# %%\nx\n",
-        ),
+        ("rawjson", "# %% [raw] {\"format\": \"text/latex\", \"k\": [1, 2]}\n# E\n\n# %%\nx\n"),
         ("empty", "# %%\n\n# %%\n\n# %% [markdown]\n\n# %%\nx\n"),
         ("depth", "# %%% [md] sub\n# text\n\n# %%%% deeper\nx\n"),
-        (
-            "nbconvert",
-            "# In[1]:\n\n\nimport os\n\n\n# In[ ]:\n\n\nx = 1\n\n",
-        ),
+        ("nbconvert", "# In[1]:\n\n\nimport os\n\n\n# In[ ]:\n\n\nx = 1\n\n"),
         (
             "shebang",
             "#!/usr/bin/env python\n# ---\n# jupyter:\n#   kernelspec:\n#     display_name: Python 3\n#     language: python\n#     name: python3\n# ---\n\n# %%\nx\n",
         ),
         ("leading", "import os\n\n# %%\nx\n"),
-        (
-            "unicode",
-            "# %% [markdown] t=\"é\"\n# héllo 🦦\n\n# %%\nprint(\"ü\")\n",
-        ),
+        ("unicode", "# %% [markdown] t=\"é\"\n# héllo 🦦\n\n# %%\nprint(\"ü\")\n"),
         ("whitespace", "# %%\nx = 1\n   \n# %%\ny\n  \n"),
         ("titles", "# %% Setup\nx = 1\n\n# %% Another one\ny\n"),
         ("active", "# %% active=\"\"\nx\n\n# %%\ny\n"),
@@ -1274,15 +1169,7 @@ mod tests {
                 );
             }
             // rewriting
-            let theirs = jupytext(&[
-                "--from",
-                "py:percent",
-                "--to",
-                "py:percent",
-                "-o",
-                "-",
-                path,
-            ]);
+            let theirs = jupytext(&["--from", "py:percent", "--to", "py:percent", "-o", "-", path]);
             let ours = write(&ours);
             let (theirs, ours) = (strip_header(&theirs), strip_header(&ours));
             if theirs != ours {
@@ -1332,11 +1219,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let ipynb = dir.join("nb.ipynb");
         let py = dir.join("nb.py");
-        std::fs::copy(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/showcase.ipynb"),
-            &ipynb,
-        )
-        .unwrap();
+        std::fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/showcase.ipynb"), &ipynb).unwrap();
         jupytext(&["--set-formats", "ipynb,py:percent", ipynb.to_str().unwrap()]);
         let paired = std::fs::read_to_string(&py).unwrap();
         // jotter rewrites the paired file byte for byte, pairing header included

@@ -3,11 +3,13 @@
 //! an in-memory ring (Info and up, shown by the `L` log viewer) and, with
 //! `--log <file>`, a timestamped file that also gets Debug (kernel wire).
 
-use std::collections::VecDeque;
-use std::fs::File;
-use std::io::Write;
-use std::sync::Mutex;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::VecDeque,
+    fs::File,
+    io::Write,
+    sync::Mutex,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 /// Records kept for the log viewer; older ones are dropped.
 const RING_CAP: usize = 2000;
@@ -34,9 +36,7 @@ impl log::Log for Logger {
 
     fn log(&self, record: &log::Record) {
         if let Some(file) = &self.file {
-            let t = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default();
+            let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
             let mut f = file.lock().unwrap();
             let _ = writeln!(
                 f,
@@ -69,20 +69,11 @@ impl log::Log for Logger {
 /// (bad log path) are returned for the caller to print.
 pub fn init(path: Option<&std::path::Path>) -> anyhow::Result<()> {
     let file = match path {
-        Some(p) => Some(Mutex::new(
-            File::options().create(true).append(true).open(p)?,
-        )),
+        Some(p) => Some(Mutex::new(File::options().create(true).append(true).open(p)?)),
         None => None,
     };
-    let level = if file.is_some() {
-        log::LevelFilter::Debug
-    } else {
-        log::LevelFilter::Info
-    };
-    log::set_boxed_logger(Box::new(Logger {
-        start: Instant::now(),
-        file,
-    }))?;
+    let level = if file.is_some() { log::LevelFilter::Debug } else { log::LevelFilter::Info };
+    log::set_boxed_logger(Box::new(Logger { start: Instant::now(), file }))?;
     log::set_max_level(level);
     Ok(())
 }

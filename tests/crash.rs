@@ -1,11 +1,12 @@
 //! A crash must hand the terminal back and keep the unsaved work: run the
 //! binary in a pty, edit, `:panic`, then check what it left behind.
 
-use std::io::{Read, Write};
-use std::os::fd::FromRawFd;
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::{
+    io::{Read, Write},
+    os::{fd::FromRawFd, unix::process::CommandExt},
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
 
 /// Read until `quiet` passes with nothing new (or `max` overall). Answers
 /// the keyboard-protocol query so startup doesn't wait for its timeout.
@@ -49,12 +50,7 @@ fn a_panic_restores_the_terminal_and_autosaves() {
 
     // a pty, with the child as its session leader so raw mode works
     let (mut master, mut slave) = (0, 0);
-    let ws = libc::winsize {
-        ws_row: 30,
-        ws_col: 100,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
+    let ws = libc::winsize { ws_row: 30, ws_col: 100, ws_xpixel: 0, ws_ypixel: 0 };
     // SAFETY: openpty fills two fds; the size goes in by ioctl afterwards
     // (openpty's pointer parameters differ in mutability between Linux and
     // macOS; `as _` on the ioctl requests covers their differing int types)
@@ -99,36 +95,18 @@ fn a_panic_restores_the_terminal_and_autosaves() {
     }
 
     let mut out = Vec::new();
-    read_until_quiet(
-        &mut pty,
-        &mut out,
-        Duration::from_millis(800),
-        Duration::from_secs(15),
-    );
+    read_until_quiet(&mut pty, &mut out, Duration::from_millis(800), Duration::from_secs(15));
     let screen = String::from_utf8_lossy(&out).to_string();
     assert!(screen.contains("nb.ipynb"), "jotter never drew:\n{screen}");
     assert!(screen.contains("VIEW"), "status line missing:\n{screen}"); // highlighted source is split by colours
 
     // an edit (new cell) makes the notebook dirty, then the crash
     pty.write_all(b"a").unwrap();
-    read_until_quiet(
-        &mut pty,
-        &mut out,
-        Duration::from_millis(300),
-        Duration::from_secs(5),
-    );
+    read_until_quiet(&mut pty, &mut out, Duration::from_millis(300), Duration::from_secs(5));
     pty.write_all(b":panic\r").unwrap();
-    read_until_quiet(
-        &mut pty,
-        &mut out,
-        Duration::from_millis(500),
-        Duration::from_secs(10),
-    );
+    read_until_quiet(&mut pty, &mut out, Duration::from_millis(500), Duration::from_secs(10));
     let status = child.wait().unwrap();
-    assert!(
-        !status.success(),
-        "the crash must not look like a clean exit"
-    );
+    assert!(!status.success(), "the crash must not look like a clean exit");
 
     let all = String::from_utf8_lossy(&out);
     let tail = &all[all.rfind("\x1b[?1049h").unwrap_or(0)..]; // the session: after entering the alt screen
@@ -138,20 +116,13 @@ fn a_panic_restores_the_terminal_and_autosaves() {
         ("\x1b[?2004l", "bracketed paste off"),
         ("\x1b[<1u", "keyboard protocol popped"),
     ] {
-        assert!(
-            tail.contains(seq),
-            "missing after the panic: {what}\n{tail:?}"
-        );
+        assert!(tail.contains(seq), "missing after the panic: {what}\n{tail:?}");
     }
     let autosaves: Vec<_> = std::fs::read_dir(dir.join("state/jotter/autosave"))
         .map(|d| d.flatten().collect())
         .unwrap_or_default();
     assert_eq!(autosaves.len(), 1, "one recovery copy after the crash");
     let saved = std::fs::read_to_string(autosaves[0].path()).unwrap();
-    assert_eq!(
-        saved.matches("\"cell_type\"").count(),
-        2,
-        "the new cell is in it"
-    );
+    assert_eq!(saved.matches("\"cell_type\"").count(), 2, "the new cell is in it");
     let _ = std::fs::remove_dir_all(&dir);
 }

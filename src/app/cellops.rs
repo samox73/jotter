@@ -178,10 +178,7 @@ impl App {
         }
         self.yanked = self.notebook.cells[r.clone()].to_vec();
         let n = r.len();
-        self.record(
-            CellOp::Batch((0..n).map(|_| CellOp::Remove(r.start)).collect()),
-            rendered,
-        );
+        self.record(CellOp::Batch((0..n).map(|_| CellOp::Remove(r.start)).collect()), rendered);
         self.message = Some(match n {
             1 => "cell deleted (p pastes it back)".into(),
             n => format!("{n} cells deleted (p pastes them back)"),
@@ -246,12 +243,8 @@ impl App {
             return;
         };
         let offset = char_offset(&source, (row, col));
-        let (before, after) = source.split_at(
-            source
-                .char_indices()
-                .nth(offset)
-                .map_or(source.len(), |(b, _)| b),
-        );
+        let (before, after) =
+            source.split_at(source.char_indices().nth(offset).map_or(source.len(), |(b, _)| b));
         let before = before.strip_suffix('\n').unwrap_or(before).to_string();
         let after = after.strip_prefix('\n').unwrap_or(after).to_string();
         let mut second = cell.clone();
@@ -398,13 +391,7 @@ impl App {
         let Some(cells) = self.notebook.cells.get(r) else {
             return;
         };
-        osc52(
-            &cells
-                .iter()
-                .map(|c| c.source.as_str())
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-        );
+        osc52(&cells.iter().map(|c| c.source.as_str()).collect::<Vec<_>>().join("\n\n"));
         self.yanked = cells.to_vec();
         self.message = Some(match cells.len() {
             1 => "cell yanked (p pastes) · source on the clipboard".into(),
@@ -423,8 +410,10 @@ fn run_formatter(
     dir: Option<&std::path::Path>,
     lang: &str,
 ) -> Result<String, String> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
     if cmd.trim().is_empty() {
         return Err("formatter is empty".into());
     }
@@ -446,10 +435,7 @@ fn run_formatter(
     let _ = writer.join();
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        let line = err
-            .lines()
-            .find(|l| !l.trim().is_empty())
-            .unwrap_or("failed");
+        let line = err.lines().find(|l| !l.trim().is_empty()).unwrap_or("failed");
         return Err(line.trim().to_string());
     }
     let text = String::from_utf8(out.stdout).map_err(|_| "formatter printed invalid UTF-8")?;
@@ -478,10 +464,7 @@ mod tests {
         assert_eq!(sources(&app), ["a = 1", "b = 2"]);
         assert_eq!(app.selected, 1);
         assert!(app.notebook.cells[1].outputs.as_ref().unwrap().is_empty());
-        assert_ne!(
-            app.notebook.cells[0].extra["id"],
-            app.notebook.cells[1].extra["id"]
-        );
+        assert_ne!(app.notebook.cells[0].extra["id"], app.notebook.cells[1].extra["id"]);
         app.undo(&mut r);
         assert_eq!(sources(&app), ["a = 1\nb = 2"]);
         app.redo(&mut r);
@@ -512,10 +495,7 @@ mod tests {
         app.on_key(key('y'), &mut r);
         app.on_key(key('p'), &mut r);
         assert_eq!(sources(&app), ["x", "x"]);
-        assert_ne!(
-            app.notebook.cells[0].extra["id"],
-            app.notebook.cells[1].extra["id"]
-        );
+        assert_ne!(app.notebook.cells[0].extra["id"], app.notebook.cells[1].extra["id"]);
         app.on_key(key('K'), &mut r); // move the copy up
         assert_eq!(app.selected, 0);
         app.undo(&mut r);
@@ -535,23 +515,14 @@ mod tests {
 
     #[test]
     fn formatter_pipes_stdin_and_reports_failure() {
-        assert_eq!(
-            super::run_formatter("tr a b", "aa\n", None, "python").unwrap(),
-            "bb"
-        );
+        assert_eq!(super::run_formatter("tr a b", "aa\n", None, "python").unwrap(), "bb");
         assert!(super::run_formatter("false", "x", None, "python").is_err());
         assert_eq!(
             super::run_formatter("echo $JOTTER_LANGUAGE", "x", None, "python").unwrap(),
             "python"
         );
         assert!(super::run_formatter("no-such-formatter-x", "x", None, "python").is_err());
-        assert_eq!(
-            super::run_formatter("tr a b | tr b c", "a", None, "python").unwrap(),
-            "c"
-        );
-        assert!(
-            super::run_formatter("false | cat", "x", None, "python").is_err(),
-            "blank output"
-        );
+        assert_eq!(super::run_formatter("tr a b | tr b c", "a", None, "python").unwrap(), "c");
+        assert!(super::run_formatter("false | cat", "x", None, "python").is_err(), "blank output");
     }
 }

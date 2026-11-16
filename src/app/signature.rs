@@ -3,8 +3,9 @@
 //! signature once; the popup then follows the cursor through the call and
 //! highlights the argument being typed, positionally or by `name=`.
 
-use super::*;
 use completion::{is_ident, parse_inspect};
+
+use super::*;
 
 /// The call the cursor is in, and its signature once the kernel answered.
 pub struct SigHelp {
@@ -64,11 +65,7 @@ impl SigHelp {
     /// Test helper: the call's `(` at char `open`, the callee `name` before it.
     #[cfg(test)]
     pub fn placed(self, open: usize, name: &str) -> Self {
-        SigHelp {
-            open,
-            name: name.into(),
-            ..self
-        }
+        SigHelp { open, name: name.into(), ..self }
     }
 
     #[cfg(test)]
@@ -213,10 +210,7 @@ fn keyword_of(arg: &str) -> Option<String> {
 /// or None when the bracket isn't a call (`(a, b)`, `if (`, `x = (`).
 fn callee(source: &str, open: usize) -> Option<String> {
     let before: Vec<char> = source.chars().take(open).collect();
-    let start = before
-        .iter()
-        .rposition(|&c| !(is_ident(c) || c == '.'))
-        .map_or(0, |p| p + 1);
+    let start = before.iter().rposition(|&c| !(is_ident(c) || c == '.')).map_or(0, |p| p + 1);
     let name: String = before[start..].iter().collect();
     let name = name.trim_start_matches('.');
     const KEYWORDS: &[&str] = &[
@@ -234,15 +228,8 @@ impl App {
     /// asking the kernel when `(` or `,` enters a call with no signature yet.
     pub(super) fn update_signature(&mut self, key: KeyEvent) {
         let wanted = crate::config::get().signature_help
-            && self
-                .notebook
-                .cells
-                .get(self.selected)
-                .is_some_and(|c| c.cell_type == "code");
-        let Some(editor) = self
-            .editor
-            .as_ref()
-            .filter(|e| wanted && e.mode() == ModeKind::Insert)
+            && self.notebook.cells.get(self.selected).is_some_and(|c| c.cell_type == "code");
+        let Some(editor) = self.editor.as_ref().filter(|e| wanted && e.mode() == ModeKind::Insert)
         else {
             self.signature = None;
             return;
@@ -302,8 +289,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::tests::one_cell_app;
-    use crate::kernel::Event;
+    use crate::{app::tests::one_cell_app, kernel::Event};
 
     fn site(src_with_cursor: &str) -> Option<CallSite> {
         let cursor = src_with_cursor.find('^').expect("^ marks the cursor");
@@ -314,18 +300,10 @@ mod tests {
     #[test]
     fn finds_the_call_and_argument_under_the_cursor() {
         let at = |open, arg, kw: Option<&str>| {
-            Some(CallSite {
-                open,
-                arg: Some(arg),
-                keyword: kw.map(String::from),
-            })
+            Some(CallSite { open, arg: Some(arg), keyword: kw.map(String::from) })
         };
         let named = |open, kw: Option<&str>| {
-            Some(CallSite {
-                open,
-                arg: None,
-                keyword: kw.map(String::from),
-            })
+            Some(CallSite { open, arg: None, keyword: kw.map(String::from) })
         };
         // after a named argument only named ones may follow: no position
         assert_eq!(site("np.var(x, ddof=1, ^"), named(6, None));
@@ -352,10 +330,7 @@ mod tests {
 
     #[test]
     fn callee_names_skip_non_calls() {
-        assert_eq!(
-            callee("np.random.normal(", 16).as_deref(),
-            Some("np.random.normal")
-        );
+        assert_eq!(callee("np.random.normal(", 16).as_deref(), Some("np.random.normal"));
         assert_eq!(callee("x = (", 4), None);
         assert_eq!(callee("if (", 3), None);
         assert_eq!(callee("df.groupby('a').agg(", 19).as_deref(), Some("agg"));
@@ -375,10 +350,7 @@ mod tests {
         assert_eq!(active(0, Some("nope")), None);
         // past a named argument: nothing, unless a `name=` is being typed
         let named = |kw: Option<&str>| {
-            let s = SigHelp {
-                arg: None,
-                ..SigHelp::for_test(sig, 0, kw)
-            };
+            let s = SigHelp { arg: None, ..SigHelp::for_test(sig, 0, kw) };
             s.active().map(|r| s.text[r].to_string())
         };
         assert_eq!(named(None), None);
@@ -406,24 +378,15 @@ mod tests {
         pending(&mut app, "q1");
         let doc = "\x1b[31mSignature:\x1b[39m mine(path, kernel=None, *, tx=1)\n\x1b[31mType:\x1b[39m      function";
         app.apply_kernel_event(
-            Event::Inspect {
-                parent: "q1".into(),
-                text: Some(doc.into()),
-            },
+            Event::Inspect { parent: "q1".into(), text: Some(doc.into()) },
             &mut r,
         );
-        assert_eq!(
-            app.signature.as_ref().unwrap().text,
-            "mine(path, kernel=None, *, tx=1)"
-        );
+        assert_eq!(app.signature.as_ref().unwrap().text, "mine(path, kernel=None, *, tx=1)");
 
         // not a callable (or unknown to the kernel): no popup
         pending(&mut app, "q2");
         app.apply_kernel_event(
-            Event::Inspect {
-                parent: "q2".into(),
-                text: Some("Type:      int".into()),
-            },
+            Event::Inspect { parent: "q2".into(), text: Some("Type:      int".into()) },
             &mut r,
         );
         assert!(app.signature.is_none());

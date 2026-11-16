@@ -1,17 +1,23 @@
-use crate::editor::{Editor, Outcome};
-use crate::kernel::{Event, Kernel};
-use crate::notebook::{Cell, Notebook, new_cell_id};
-use crate::nvim::{Backend, ModeKind, NvimCell, NvimSession};
-use crate::ui::Rendered;
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    time::{Instant, SystemTime},
+};
+
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use jupyter_protocol::messaging::JupyterMessage;
 use ratatui::layout::Rect;
 use serde_json::{Map, Value};
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::time::{Instant, SystemTime};
 use tokio::sync::mpsc;
+
+use crate::{
+    editor::{Editor, Outcome},
+    kernel::{Event, Kernel},
+    notebook::{Cell, Notebook, new_cell_id},
+    nvim::{Backend, ModeKind, NvimCell, NvimSession},
+    ui::Rendered,
+};
 
 mod cellops;
 mod completion;
@@ -53,10 +59,7 @@ impl KernelPick {
     /// Kernels whose name contains the filter, ignoring case.
     pub fn shown(&self) -> Vec<&String> {
         let f = self.filter.to_lowercase();
-        self.kernels
-            .iter()
-            .filter(|k| k.to_lowercase().contains(&f))
-            .collect()
+        self.kernels.iter().filter(|k| k.to_lowercase().contains(&f)).collect()
     }
 }
 
@@ -268,8 +271,9 @@ fn osc52(text: &str) {
     if cfg!(test) {
         return; // keep escape sequences out of test output
     }
-    use base64::Engine;
     use std::io::Write;
+
+    use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
     let mut out = std::io::stdout();
     let _ = write!(out, "\x1b]52;c;{b64}\x07");
@@ -294,10 +298,7 @@ fn autosave_path_for(path: &std::path::Path) -> PathBuf {
     match crate::config::state_dir() {
         Some(dir) => dir.join("autosave").join(name),
         None => {
-            let file = path
-                .file_name()
-                .map(|s| s.to_string_lossy())
-                .unwrap_or_default();
+            let file = path.file_name().map(|s| s.to_string_lossy()).unwrap_or_default();
             path.with_file_name(format!(".{file}.autosave"))
         }
     }
@@ -343,11 +344,7 @@ impl App {
         events_tx: mpsc::UnboundedSender<Event>,
     ) -> Result<Self> {
         let is_new = !path.exists();
-        let notebook = if is_new {
-            Notebook::new_empty()
-        } else {
-            Notebook::open(&path)?
-        };
+        let notebook = if is_new { Notebook::new_empty() } else { Notebook::open(&path)? };
         let kernel_name = kernel_override
             .or_else(|| {
                 notebook
@@ -536,9 +533,7 @@ impl App {
         {
             self.nvim = Some(s);
         }
-        self.selected = self
-            .selected
-            .min(self.notebook.cells.len().saturating_sub(1));
+        self.selected = self.selected.min(self.notebook.cells.len().saturating_sub(1));
         // in-flight executions point at cells that no longer exist as indexed
         self.forget_executions();
         self.undo_stack.clear();
@@ -676,11 +671,7 @@ impl App {
         }
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                let delta: isize = if mouse.kind == MouseEventKind::ScrollUp {
-                    -3
-                } else {
-                    3
-                };
+                let delta: isize = if mouse.kind == MouseEventKind::ScrollUp { -3 } else { 3 };
                 // Scroll latching: ticks less than a pause apart form one
                 // gesture, and the gesture keeps its initial target — a view
                 // scroll is never captured by an output that merely slides
@@ -697,13 +688,11 @@ impl App {
                             .then(|| self.hit.get((mouse.row - self.body.y) as usize))
                             .flatten()
                         {
-                            Some(&Hit {
-                                cell,
-                                kind: HitKind::Output,
-                            }) if rendered
-                                .blocks
-                                .get(cell)
-                                .is_some_and(|b| b.output_scrollable()) =>
+                            Some(&Hit { cell, kind: HitKind::Output })
+                                if rendered
+                                    .blocks
+                                    .get(cell)
+                                    .is_some_and(|b| b.output_scrollable()) =>
                             {
                                 WheelTarget::Output(cell)
                             }
@@ -760,17 +749,11 @@ impl App {
         self.selected = cell;
         self.manual_scroll = true; // a click never scrolls the view
         match kind {
-            HitKind::Source {
-                line: row,
-                col: col0,
-            } => {
+            HitKind::Source { line: row, col: col0 } => {
                 // markdown renders rich when not edited: a single click only
                 // selects; a double click opens the raw source at the line
-                let is_md = self
-                    .notebook
-                    .cells
-                    .get(cell)
-                    .is_some_and(|c| c.cell_type == "markdown");
+                let is_md =
+                    self.notebook.cells.get(cell).is_some_and(|c| c.cell_type == "markdown");
                 if is_md && !double && self.editor.is_none() {
                     return;
                 }
@@ -950,11 +933,7 @@ impl App {
                 if let Some(req) = self.stdin_req.take()
                     && let Some(k) = &self.kernel
                 {
-                    let value = if key.code == KeyCode::Enter {
-                        req.buf
-                    } else {
-                        String::new()
-                    };
+                    let value = if key.code == KeyCode::Enter { req.buf } else { String::new() };
                     k.reply_input(&req.request, value);
                 }
             }
@@ -1069,9 +1048,8 @@ impl App {
     /// selects cell 5.
     fn ex_command(&mut self, cmd: &str, rendered: &mut Rendered) {
         let cmd = cmd.trim();
-        let (name, arg) = cmd
-            .split_once(char::is_whitespace)
-            .map_or((cmd, ""), |(n, a)| (n, a.trim()));
+        let (name, arg) =
+            cmd.split_once(char::is_whitespace).map_or((cmd, ""), |(n, a)| (n, a.trim()));
         let force = name.ends_with('!');
         let editing = self.editor.is_some();
         match (name, arg) {
@@ -1178,10 +1156,7 @@ impl App {
         }
         if target.exists() && target != self.path && self.overwrite_armed.as_ref() != Some(&target)
         {
-            self.message = Some(format!(
-                "{} exists — Enter again to overwrite",
-                target.display()
-            ));
+            self.message = Some(format!("{} exists — Enter again to overwrite", target.display()));
             self.overwrite_armed = Some(target);
             return false;
         }
@@ -1274,12 +1249,7 @@ impl App {
         for step in 1..=n.max(1) {
             let i = (self.selected as isize + dir * step as isize).rem_euclid(n.max(1) as isize)
                 as usize;
-            if self
-                .notebook
-                .cells
-                .get(i)
-                .is_some_and(|c| c.source.to_lowercase().contains(&q))
-            {
+            if self.notebook.cells.get(i).is_some_and(|c| c.source.to_lowercase().contains(&q)) {
                 self.mark_jump();
                 self.selected = i;
                 return;
@@ -1316,10 +1286,7 @@ impl App {
             && editor.mode() == ModeKind::Normal
             && key.code == KeyCode::Char(':')
         {
-            self.prompt = Some(Prompt {
-                kind: PromptKind::Command,
-                buf: String::new(),
-            });
+            self.prompt = Some(Prompt { kind: PromptKind::Command, buf: String::new() });
             return;
         }
         let outcome = match editor.input(key) {
@@ -1509,10 +1476,7 @@ impl App {
             (None, code) => match code {
                 KeyCode::Char('q') => self.quit(),
                 KeyCode::Char(':') => {
-                    self.prompt = Some(Prompt {
-                        kind: PromptKind::Command,
-                        buf: String::new(),
-                    })
+                    self.prompt = Some(Prompt { kind: PromptKind::Command, buf: String::new() })
                 }
                 KeyCode::Char('w') => {
                     self.save_notebook(false, rendered);
@@ -1564,10 +1528,7 @@ impl App {
                 KeyCode::Char('d') => self.pending = Some('d'),
                 KeyCode::Char('y') => self.pending = Some('y'),
                 KeyCode::Char('/') => {
-                    self.prompt = Some(Prompt {
-                        kind: PromptKind::Search,
-                        buf: String::new(),
-                    })
+                    self.prompt = Some(Prompt { kind: PromptKind::Search, buf: String::new() })
                 }
                 KeyCode::Char('n') => self.find(1),
                 KeyCode::Char('N') => self.find(-1),
@@ -1706,8 +1667,7 @@ impl App {
         let had_existing = existing.is_some();
         // first edit: take the background spawn (waits if it's still loading)
         let started = self.nvim_spawn.take().map(|h| {
-            h.join()
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("nvim spawn thread panicked")))
+            h.join().unwrap_or_else(|_| Err(anyhow::anyhow!("nvim spawn thread panicked")))
         });
         let opened = existing
             .map(Ok)
@@ -1774,9 +1734,7 @@ impl App {
         match self.notebook.cells.get(self.selected) {
             Some(cell) => {
                 let id = cell.extra.get("id").and_then(Value::as_str).unwrap_or("-");
-                let count = cell
-                    .execution_count()
-                    .map_or("-".to_string(), |n| n.to_string());
+                let count = cell.execution_count().map_or("-".to_string(), |n| n.to_string());
                 out += &format!(
                     "cell {}/{} · id {id} · {} · execution_count {count}\n",
                     self.selected + 1,
@@ -1819,26 +1777,14 @@ impl App {
                     .iter()
                     .filter(|&(_, &c)| c == self.selected)
                     .map(|(m, _)| {
-                        let state = if self.started.contains_key(m) {
-                            "running"
-                        } else {
-                            "queued"
-                        };
-                        let half = if self.half_done.contains(m) {
-                            ", half-done"
-                        } else {
-                            ""
-                        };
+                        let state = if self.started.contains_key(m) { "running" } else { "queued" };
+                        let half = if self.half_done.contains(m) { ", half-done" } else { "" };
                         format!("{state}{half} msg {m}")
                     })
                     .collect();
                 out += &format!(
                     "exec: {}\n",
-                    if runs.is_empty() {
-                        "idle".into()
-                    } else {
-                        runs.join(" · ")
-                    }
+                    if runs.is_empty() { "idle".into() } else { runs.join(" · ") }
                 );
             }
             None => out += "no cell selected (empty notebook)\n",
@@ -1884,11 +1830,7 @@ impl App {
                 ),
             },
             rendered.graphics_summary(),
-            if self.keyboard_protocol {
-                "kitty protocol"
-            } else {
-                "legacy (no Shift+Enter)"
-            }
+            if self.keyboard_protocol { "kitty protocol" } else { "legacy (no Shift+Enter)" }
         );
         out.trim_end().to_string()
     }
@@ -1933,11 +1875,7 @@ impl App {
     }
 
     fn remap_running(&mut self, f: impl Fn(usize) -> Option<usize>) {
-        self.running = self
-            .running
-            .drain()
-            .filter_map(|(k, v)| f(v).map(|v| (k, v)))
-            .collect();
+        self.running = self.running.drain().filter_map(|(k, v)| f(v).map(|v| (k, v))).collect();
     }
 
     fn run_cell(&mut self, idx: usize, rendered: &mut Rendered) {
@@ -1954,10 +1892,8 @@ impl App {
                 if !self.deferred.iter().any(|d| d == id) {
                     self.deferred.push(id.to_string());
                 }
-                self.message = Some(format!(
-                    "kernel starting — {} cell(s) queued",
-                    self.deferred.len()
-                ));
+                self.message =
+                    Some(format!("kernel starting — {} cell(s) queued", self.deferred.len()));
             } else {
                 self.message = Some("no kernel — R to (re)start one".into());
             }
@@ -2022,11 +1958,7 @@ impl App {
             Event::LaunchFailed { launch, .. } if launch != self.launch => {}
             Event::LaunchFailed { reason, .. } => self.no_kernel(reason),
             Event::NotFound { launch, .. } if launch != self.launch => {}
-            Event::NotFound {
-                wanted,
-                mut kernels,
-                ..
-            } => {
+            Event::NotFound { wanted, mut kernels, .. } => {
                 self.kernel_starting = false; // runs queued so far wait for the pick
                 if kernels.is_empty() {
                     self.no_kernel(format!(
@@ -2069,13 +2001,9 @@ impl App {
                     self.touch_outputs();
                 }
             }
-            Event::Complete {
-                parent,
-                matches,
-                start,
-                types,
-                ..
-            } => self.on_complete_reply(parent, matches, start, types),
+            Event::Complete { parent, matches, start, types, .. } => {
+                self.on_complete_reply(parent, matches, start, types)
+            }
             Event::Inspect { parent, text } => self.on_inspect_reply(parent, text),
             Event::Output { parent, output } => {
                 if let Some(idx) = self.target_cell(&parent) {
@@ -2100,9 +2028,7 @@ impl App {
             }
             Event::ExecutionCount { parent, count } => {
                 if let Some(idx) = self.target_cell(&parent) {
-                    self.notebook.cells[idx]
-                        .extra
-                        .insert("execution_count".into(), count.into());
+                    self.notebook.cells[idx].extra.insert("execution_count".into(), count.into());
                     self.touch_outputs();
                     self.started.insert(parent, Instant::now()); // no longer queued
                     if self.follow {
@@ -2111,11 +2037,7 @@ impl App {
                     }
                 }
             }
-            Event::Input {
-                request,
-                prompt,
-                password,
-            } => {
+            Event::Input { request, prompt, password } => {
                 // overlays take keys first: close them so typing reaches the box
                 if self.zoom.take().is_some() {
                     self.message = None; // "zoom — any key closes"
@@ -2124,12 +2046,7 @@ impl App {
                 self.debug = None;
                 self.logs = None;
                 self.pager = None;
-                self.stdin_req = Some(StdinReq {
-                    prompt,
-                    buf: String::new(),
-                    password,
-                    request,
-                });
+                self.stdin_req = Some(StdinReq { prompt, buf: String::new(), password, request });
             }
             Event::Status { parent, busy } => {
                 self.kernel_busy = busy;
@@ -2175,21 +2092,11 @@ pub(super) mod tests {
     }
 
     pub(super) fn labels(app: &App) -> Vec<&str> {
-        app.completion
-            .as_ref()
-            .unwrap()
-            .items
-            .iter()
-            .map(|c| c.label())
-            .collect()
+        app.completion.as_ref().unwrap().items.iter().map(|c| c.label()).collect()
     }
 
     pub(super) fn sources(app: &App) -> Vec<&str> {
-        app.notebook
-            .cells
-            .iter()
-            .map(|c| c.source.as_str())
-            .collect()
+        app.notebook.cells.iter().map(|c| c.source.as_str()).collect()
     }
 
     pub(super) fn key(c: char) -> KeyEvent {
@@ -2205,28 +2112,11 @@ pub(super) mod tests {
         app.run_cell(0, &mut r);
         assert_eq!(app.deferred, ["c1"], "queued once, by cell id");
         // a stale launch's failure is ignored
-        app.apply_kernel_event(
-            Event::LaunchFailed {
-                launch: 2,
-                reason: "old".into(),
-            },
-            &mut r,
-        );
+        app.apply_kernel_event(Event::LaunchFailed { launch: 2, reason: "old".into() }, &mut r);
         assert_eq!(app.deferred.len(), 1);
-        app.apply_kernel_event(
-            Event::LaunchFailed {
-                launch: 3,
-                reason: "boom".into(),
-            },
-            &mut r,
-        );
+        app.apply_kernel_event(Event::LaunchFailed { launch: 3, reason: "boom".into() }, &mut r);
         assert!(app.deferred.is_empty() && !app.kernel_starting);
-        assert!(
-            app.message
-                .as_deref()
-                .unwrap()
-                .contains("1 queued run(s) dropped")
-        );
+        assert!(app.message.as_deref().unwrap().contains("1 queued run(s) dropped"));
     }
 
     #[tokio::test] // the pick spawns a launch
@@ -2252,16 +2142,9 @@ pub(super) mod tests {
             let pick = app.kernel_pick.as_ref().unwrap();
             pick.shown().into_iter().cloned().collect()
         };
-        assert_eq!(
-            shown(&app),
-            ["julia-1.12", "julia-1.10"],
-            "only the notebook's language"
-        );
+        assert_eq!(shown(&app), ["julia-1.12", "julia-1.10"], "only the notebook's language");
         app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &mut r);
-        assert!(
-            app.kernel_pick.is_none() && !app.kernel_starting,
-            "Esc: no kernel"
-        );
+        assert!(app.kernel_pick.is_none() && !app.kernel_starting, "Esc: no kernel");
         assert_eq!(app.kernel_name, "julia-1.11");
 
         app.apply_kernel_event(not_found(), &mut r);
@@ -2271,14 +2154,8 @@ pub(super) mod tests {
         assert_eq!(shown(&app), ["julia-1.10"], "typing filters, ignoring case");
         app.on_key(key('x'), &mut r);
         app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut r);
-        assert!(
-            app.kernel_pick.is_some(),
-            "Enter with no match changes nothing"
-        );
-        app.on_key(
-            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
-            &mut r,
-        );
+        assert!(app.kernel_pick.is_some(), "Enter with no match changes nothing");
+        app.on_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE), &mut r);
         app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut r);
         assert_eq!(app.kernel_name, "julia-1.10");
         assert!(app.kernel_pick.is_none());
@@ -2289,10 +2166,7 @@ pub(super) mod tests {
             Event::NotFound {
                 launch: 2,
                 wanted: "x".into(),
-                kernels: vec![
-                    ("rust".into(), "rust".into()),
-                    ("ir".into(), "R".into()),
-                ],
+                kernels: vec![("rust".into(), "rust".into()), ("ir".into(), "R".into())],
             },
             &mut r,
         );
@@ -2322,10 +2196,7 @@ pub(super) mod tests {
         app.notebook.cells.push(app.notebook.cells[0].clone());
         r.rebuild_all(&app.notebook);
         app.apply_kernel_event(
-            Event::UpdateDisplay {
-                display_id: "d1".into(),
-                output: disp("new"),
-            },
+            Event::UpdateDisplay { display_id: "d1".into(), output: disp("new") },
             &mut r,
         );
         for c in &app.notebook.cells {
@@ -2344,18 +2215,11 @@ pub(super) mod tests {
             None,
         );
         app.apply_kernel_event(
-            Event::Input {
-                request: Box::new(request),
-                prompt: "name: ".into(),
-                password: false,
-            },
+            Event::Input { request: Box::new(request), prompt: "name: ".into(), password: false },
             &mut r,
         );
         assert!(!app.show_help && app.logs.is_none());
-        app.on_key(
-            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-            &mut r,
-        );
+        app.on_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), &mut r);
         assert_eq!(app.stdin_req.as_ref().unwrap().buf, "a");
     }
 
@@ -2368,13 +2232,7 @@ pub(super) mod tests {
         r.rebuild_all(&app.notebook);
         let start = |app: &mut App, r: &mut Rendered, id: &str, idx: usize| {
             app.running.insert(id.into(), idx);
-            app.apply_kernel_event(
-                Event::ExecutionCount {
-                    parent: id.into(),
-                    count: 1,
-                },
-                r,
-            );
+            app.apply_kernel_event(Event::ExecutionCount { parent: id.into(), count: 1 }, r);
         };
         app.follow = true; // as run_range(0..3) sets it
         start(&mut app, &mut r, "m1", 1);
@@ -2393,17 +2251,11 @@ pub(super) mod tests {
     fn space_runs_x_runs_all_ctrl_r_redoes() {
         let (mut app, mut r) = one_cell_app("keys");
         app.on_key(key(' '), &mut r);
-        assert_eq!(
-            app.message.as_deref(),
-            Some("no kernel — R to (re)start one")
-        );
+        assert_eq!(app.message.as_deref(), Some("no kernel — R to (re)start one"));
         app.on_key(key('a'), &mut r);
         app.on_key(key('u'), &mut r);
         assert_eq!(app.notebook.cells.len(), 1);
-        app.on_key(
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            &mut r,
-        );
+        app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL), &mut r);
         assert_eq!(app.notebook.cells.len(), 2, "Ctrl+r redoes");
         app.on_key(key('X'), &mut r);
         assert!(app.follow, "run all follows");
@@ -2445,19 +2297,10 @@ pub(super) mod tests {
         assert!(!app.stores_outputs());
         app.running.insert("m".into(), 0);
         app.apply_kernel_event(
-            Event::Output {
-                parent: "m".into(),
-                output: stream("out\n"),
-            },
+            Event::Output { parent: "m".into(), output: stream("out\n") },
             &mut r,
         );
-        app.apply_kernel_event(
-            Event::ExecutionCount {
-                parent: "m".into(),
-                count: 3,
-            },
-            &mut r,
-        );
+        app.apply_kernel_event(Event::ExecutionCount { parent: "m".into(), count: 3 }, &mut r);
         assert!(!app.dirty, "outputs can't be saved to a .py");
         assert!(app.autosave_pending, "but the sidecar keeps them");
         app.maybe_autosave();
@@ -2499,11 +2342,7 @@ pub(super) mod tests {
     #[test]
     fn autosave_paths_live_in_the_state_dir_keyed_by_absolute_path() {
         let p = autosave_path_for(std::path::Path::new("/data/nb/a.ipynb"));
-        assert!(
-            p.ends_with("jotter/autosave/%data%nb%a.ipynb"),
-            "{}",
-            p.display()
-        );
+        assert!(p.ends_with("jotter/autosave/%data%nb%a.ipynb"), "{}", p.display());
         let long = format!("/{}/a.ipynb", "d".repeat(400));
         let name = autosave_path_for(std::path::Path::new(&long));
         assert!(name.file_name().unwrap().len() <= 200);
@@ -2513,30 +2352,15 @@ pub(super) mod tests {
     fn execution_ends_on_reply_and_idle_in_either_order() {
         let (mut app, mut r) = one_cell_app("end");
         for (first, second) in [
-            (
-                Event::Done { parent: "m".into() },
-                Event::Status {
-                    parent: "m".into(),
-                    busy: false,
-                },
-            ),
-            (
-                Event::Status {
-                    parent: "m".into(),
-                    busy: false,
-                },
-                Event::Done { parent: "m".into() },
-            ),
+            (Event::Done { parent: "m".into() }, Event::Status { parent: "m".into(), busy: false }),
+            (Event::Status { parent: "m".into(), busy: false }, Event::Done { parent: "m".into() }),
         ] {
             app.notebook.cells[0].outputs = Some(Vec::new());
             app.running.insert("m".into(), 0);
             app.apply_kernel_event(first, &mut r);
             // output racing the reply (separate sockets) still lands
             app.apply_kernel_event(
-                Event::Output {
-                    parent: "m".into(),
-                    output: stream("late\n"),
-                },
+                Event::Output { parent: "m".into(), output: stream("late\n") },
                 &mut r,
             );
             assert_eq!(app.notebook.cells[0].outputs.as_ref().unwrap().len(), 1);
@@ -2544,13 +2368,7 @@ pub(super) mod tests {
             assert!(app.running.is_empty() && app.half_done.is_empty());
         }
         // idle of a request we never sent (kernel_info) is ignored
-        app.apply_kernel_event(
-            Event::Status {
-                parent: "other".into(),
-                busy: false,
-            },
-            &mut r,
-        );
+        app.apply_kernel_event(Event::Status { parent: "other".into(), busy: false }, &mut r);
         assert!(app.half_done.is_empty());
     }
 
@@ -2559,20 +2377,8 @@ pub(super) mod tests {
         let (mut app, mut r) = one_cell_app("toggle");
         app.running.insert("m".into(), 0);
         app.toggle_type(&mut r); // code -> markdown mid-run
-        app.apply_kernel_event(
-            Event::ExecutionCount {
-                parent: "m".into(),
-                count: 3,
-            },
-            &mut r,
-        );
-        app.apply_kernel_event(
-            Event::Output {
-                parent: "m".into(),
-                output: stream("x\n"),
-            },
-            &mut r,
-        );
+        app.apply_kernel_event(Event::ExecutionCount { parent: "m".into(), count: 3 }, &mut r);
+        app.apply_kernel_event(Event::Output { parent: "m".into(), output: stream("x\n") }, &mut r);
         let cell = &app.notebook.cells[0];
         assert!(cell.outputs.is_none());
         assert!(!cell.extra.contains_key("execution_count"));
@@ -2581,10 +2387,7 @@ pub(super) mod tests {
     #[test]
     fn wheel_gesture_latches_to_its_initial_target() {
         let path = std::env::temp_dir().join(format!("jotter-wheel-{}.ipynb", std::process::id()));
-        let text: String = (0..40)
-            .map(|i| format!("l{i}"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let text: String = (0..40).map(|i| format!("l{i}")).collect::<Vec<_>>().join("\n");
         let nb = serde_json::json!({
             "cells": [{"cell_type": "code", "metadata": {}, "execution_count": null,
                        "source": ["x"],
@@ -2601,22 +2404,11 @@ pub(super) mod tests {
         app.body = Rect::new(0, 0, 80, 30);
         app.content_lines = 100;
         app.hit = (0..30)
-            .map(|r| Hit {
-                cell: 0,
-                kind: if r == 0 {
-                    HitKind::Other
-                } else {
-                    HitKind::Output
-                },
-            })
+            .map(|r| Hit { cell: 0, kind: if r == 0 { HitKind::Other } else { HitKind::Output } })
             .collect();
         assert!(rendered.blocks[0].output_scrollable());
         let wheel = |row: u16, up: bool| MouseEvent {
-            kind: if up {
-                MouseEventKind::ScrollUp
-            } else {
-                MouseEventKind::ScrollDown
-            },
+            kind: if up { MouseEventKind::ScrollUp } else { MouseEventKind::ScrollDown },
             column: 5,
             row,
             modifiers: KeyModifiers::NONE,
@@ -2665,10 +2457,7 @@ pub(super) mod tests {
         app.write_from_editor("a = 3".into(), false, &mut rendered);
         assert_eq!(on_disk(), "a = 1", "refused");
         assert!(app.message.as_deref().unwrap().contains(":w!"));
-        assert_eq!(
-            app.notebook.cells[0].source, "a = 3",
-            "edit kept in the notebook"
-        );
+        assert_eq!(app.notebook.cells[0].source, "a = 3", "edit kept in the notebook");
 
         app.write_from_editor("a = 3".into(), true, &mut rendered);
         assert_eq!(on_disk(), "a = 3");
@@ -2713,10 +2502,7 @@ pub(super) mod tests {
         assert!(app.confirm.is_none());
         app.check_disk(&mut rendered);
         assert!(app.confirm.is_none(), "mtime accepted, no re-prompt");
-        assert!(
-            app.save_notebook(false, &mut rendered),
-            "plain w overwrites after keep-mine"
-        );
+        assert!(app.save_notebook(false, &mut rendered), "plain w overwrites after keep-mine");
         std::fs::remove_file(&path).ok();
     }
 
@@ -2729,17 +2515,9 @@ pub(super) mod tests {
         let before = app.notebook.cells.len();
         app.on_paste("arst\n".into(), &mut r); // would insert and retype cells as keys
         assert_eq!(app.notebook.cells.len(), before);
-        assert!(
-            app.message
-                .as_deref()
-                .unwrap_or("")
-                .contains("paste ignored")
-        );
+        assert!(app.message.as_deref().unwrap_or("").contains("paste ignored"));
 
-        app.on_key(
-            KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE),
-            &mut r,
-        );
+        app.on_key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE), &mut r);
         app.on_paste("x = 1\r\ny = 2".into(), &mut r);
         let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
         app.on_key(esc, &mut r);
@@ -2884,19 +2662,12 @@ pub(super) mod tests {
         app.selected = 1;
         app.on_key(key('m'), &mut r);
         app.on_key(key('a'), &mut r);
-        assert_eq!(
-            app.notebook.cells.len(),
-            4,
-            "ma sets a mark, not a new cell"
-        );
+        assert_eq!(app.notebook.cells.len(), 4, "ma sets a mark, not a new cell");
         app.selected = 3;
         app.on_key(key('\''), &mut r);
         app.on_key(key('a'), &mut r);
         assert_eq!(app.selected, 1);
-        app.on_key(
-            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
-            &mut r,
-        );
+        app.on_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL), &mut r);
         assert_eq!(app.selected, 3, "a mark jump is a jump");
         // the mark follows its cell; deleting the cell drops it, undo restores
         app.selected = 0;

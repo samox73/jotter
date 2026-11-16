@@ -18,19 +18,9 @@ const SVG_FONT_PX: f64 = 40.0;
 fn fg() -> Color {
     let theme = &crate::config::get().theme;
     if theme.contains("light") || theme.contains("GitHub") {
-        Color {
-            r: 0.24,
-            g: 0.22,
-            b: 0.21,
-            a: 1.0,
-        }
+        Color { r: 0.24, g: 0.22, b: 0.21, a: 1.0 }
     } else {
-        Color {
-            r: 211.0 / 255.0,
-            g: 198.0 / 255.0,
-            b: 170.0 / 255.0,
-            a: 1.0,
-        }
+        Color { r: 211.0 / 255.0, g: 198.0 / 255.0, b: 170.0 / 255.0, a: 1.0 }
     }
 }
 
@@ -131,13 +121,8 @@ fn to_rgba(pixmap: &tiny_skia::Pixmap) -> Option<RgbaImage> {
 /// An SVG document's intrinsic size, as `render_svg` rasterises it. Parsed
 /// without fonts: text doesn't change the size, and loading them is slow.
 pub fn svg_px(svg: &str) -> Option<(u32, u32)> {
-    let size = usvg::Tree::from_str(svg, &usvg::Options::default())
-        .ok()?
-        .size();
-    Some((
-        size.width().ceil().max(1.0) as u32,
-        size.height().ceil().max(1.0) as u32,
-    ))
+    let size = usvg::Tree::from_str(svg, &usvg::Options::default()).ok()?.size();
+    Some((size.width().ceil().max(1.0) as u32, size.height().ceil().max(1.0) as u32))
 }
 
 /// Render an SVG document at its intrinsic size (image/svg+xml outputs,
@@ -151,21 +136,12 @@ pub fn render_svg(svg: &str) -> Option<RgbaImage> {
         db.load_system_fonts();
         Arc::new(db)
     });
-    let opt = usvg::Options {
-        fontdb: fontdb.clone(),
-        ..Default::default()
-    };
+    let opt = usvg::Options { fontdb: fontdb.clone(), ..Default::default() };
     let tree = usvg::Tree::from_str(svg, &opt).ok()?;
-    let (w, h) = (
-        tree.size().width().ceil().max(1.0) as u32,
-        tree.size().height().ceil().max(1.0) as u32,
-    );
+    let (w, h) =
+        (tree.size().width().ceil().max(1.0) as u32, tree.size().height().ceil().max(1.0) as u32);
     let mut pixmap = tiny_skia::Pixmap::new(w, h)?;
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::identity(),
-        &mut pixmap.as_mut(),
-    );
+    resvg::render(&tree, tiny_skia::Transform::identity(), &mut pixmap.as_mut());
     to_rgba(&pixmap)
 }
 
@@ -219,16 +195,9 @@ fn render_scaled(
     if src_h * scale > max_h {
         scale = max_h / src_h;
     }
-    let (w, h) = (
-        (src_w * scale).ceil().max(1.0) as u32,
-        (src_h * scale).ceil().max(1.0) as u32,
-    );
+    let (w, h) = ((src_w * scale).ceil().max(1.0) as u32, (src_h * scale).ceil().max(1.0) as u32);
     let mut pixmap = tiny_skia::Pixmap::new(w, h)?; // transparent
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::from_scale(scale, scale),
-        &mut pixmap.as_mut(),
-    );
+    resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
     to_rgba(&pixmap)
 }
 
@@ -315,10 +284,7 @@ mod tests {
             assert_eq!(img.height(), 16, "height of {tex}");
             // cropped: first and last pixel-columns contain visible content
             let w = img.width();
-            assert!(
-                (0..img.height()).any(|y| img.get_pixel(0, y).0[3] > 0),
-                "left edge {tex}"
-            );
+            assert!((0..img.height()).any(|y| img.get_pixel(0, y).0[3] > 0), "left edge {tex}");
             assert!(
                 (0..img.height()).any(|y| img.get_pixel(w - 1, y).0[3] > 0),
                 "right edge {tex}"
@@ -372,10 +338,7 @@ mod tests {
             assert_eq!(img.height() % ROW as u32, 0, "{tex}: whole rows");
             assert!(img.height() <= 4 * ROW as u32, "{tex}: {}px", img.height());
             let (top, bottom) = margins(&img);
-            assert!(
-                top.abs_diff(bottom) <= 1,
-                "{tex}: {top}px above, {bottom}px below"
-            );
+            assert!(top.abs_diff(bottom) <= 1, "{tex}: {top}px above, {bottom}px below");
         }
     }
 

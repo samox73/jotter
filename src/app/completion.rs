@@ -22,12 +22,7 @@ pub struct Candidate {
 impl Candidate {
     pub(super) fn new(text: String, kind: &str, detail: &str) -> Self {
         let resolved = !detail.is_empty() || kind == "word" || kind == "keyword";
-        Candidate {
-            text,
-            kind: kind.into(),
-            detail: detail.into(),
-            resolved,
-        }
+        Candidate { text, kind: kind.into(), detail: detail.into(), resolved }
     }
 
     /// What the popup shows: the name without the live completer's `.`.
@@ -323,12 +318,7 @@ impl App {
     /// the user typed on: `start..end` are live coordinates.)
     pub(super) fn accepted_code(&self, i: usize) -> Option<(String, usize)> {
         let (c, editor) = (self.completion.as_ref()?, self.editor.as_ref()?);
-        Some(splice(
-            &editor.source(),
-            c.start,
-            c.end,
-            &c.items.get(i)?.text,
-        ))
+        Some(splice(&editor.source(), c.start, c.end, &c.items.get(i)?.text))
     }
 
     /// Popup rows (items indices) that are or will be on screen: the draw's
@@ -351,11 +341,7 @@ impl App {
         }
         let rows = self.visible_rows();
         let asks: Vec<(String, String, usize)> = rows
-            .filter(|&i| {
-                self.completion
-                    .as_ref()
-                    .is_some_and(|c| !c.items[i].resolved)
-            })
+            .filter(|&i| self.completion.as_ref().is_some_and(|c| !c.items[i].resolved))
             .filter_map(|i| {
                 let (code, pos) = self.accepted_code(i)?;
                 Some((self.completion.as_ref()?.items[i].text.clone(), code, pos))
@@ -368,12 +354,7 @@ impl App {
             return;
         };
         for (text, code, pos) in asks {
-            for cand in c
-                .all
-                .iter_mut()
-                .chain(c.items.iter_mut())
-                .filter(|x| x.text == text)
-            {
+            for cand in c.all.iter_mut().chain(c.items.iter_mut()).filter(|x| x.text == text) {
                 cand.resolved = true;
             }
             c.detail_reqs.insert(kernel.inspect(code, pos), text);
@@ -426,24 +407,14 @@ impl App {
             && key.code == KeyCode::Char('.')
             && editor.mode() == ModeKind::Insert
             && crate::ui::notebook_language(&self.notebook) == "python"
-            && self
-                .notebook
-                .cells
-                .get(self.selected)
-                .is_some_and(|c| c.cell_type == "code"))
+            && self.notebook.cells.get(self.selected).is_some_and(|c| c.cell_type == "code"))
         {
             return;
         }
         let source = editor.source();
         let (row, col) = editor.cursor();
         let offset = char_offset(&source, (row, col));
-        let line: String = source
-            .split('\n')
-            .nth(row)
-            .unwrap_or("")
-            .chars()
-            .take(col)
-            .collect();
+        let line: String = source.split('\n').nth(row).unwrap_or("").chars().take(col).collect();
         if wants_dot_completion(&line) {
             self.request_completion(source, offset, false);
         }
@@ -458,10 +429,7 @@ impl App {
         };
         let source = editor.source();
         let cur = char_offset(&source, editor.cursor());
-        let prefix_same = source
-            .chars()
-            .take(c.start)
-            .eq(c.source.chars().take(c.start));
+        let prefix_same = source.chars().take(c.start).eq(c.source.chars().take(c.start));
         if cur < c.start || !prefix_same || editor.mode() != ModeKind::Insert {
             self.completion = None;
             return;
@@ -471,12 +439,7 @@ impl App {
             return;
         }
         let typed: String = source.chars().skip(c.start).take(cur - c.start).collect();
-        c.items = c
-            .all
-            .iter()
-            .filter(|m| m.text.starts_with(&typed))
-            .cloned()
-            .collect();
+        c.items = c.all.iter().filter(|m| m.text.starts_with(&typed)).cloned().collect();
         if c.items.is_empty() {
             self.completion = None;
         } else {
@@ -526,11 +489,7 @@ impl App {
         // the cursor first), then the kernel's, then other cells' — what you
         // just named beats a builtin
         let token_start = c.source.chars().take(c.at).collect::<Vec<_>>();
-        let name_len = token_start
-            .iter()
-            .rev()
-            .take_while(|&&ch| is_ident(ch))
-            .count();
+        let name_len = token_start.iter().rev().take_while(|&&ch| is_ident(ch)).count();
         let name_start = c.at - name_len;
         let attribute = name_start > 0 && token_start.get(name_start - 1) == Some(&'.');
         let kernel_empty = matches.is_empty();
@@ -607,12 +566,7 @@ impl App {
             && let Some(item) = c.detail_reqs.remove(&parent)
         {
             let (kind, detail) = text.as_deref().map(parse_inspect).unwrap_or_default();
-            for cand in c
-                .all
-                .iter_mut()
-                .chain(c.items.iter_mut())
-                .filter(|x| x.text == item)
-            {
+            for cand in c.all.iter_mut().chain(c.items.iter_mut()).filter(|x| x.text == item) {
                 if !kind.is_empty() {
                     cand.kind = kind.clone();
                 }
@@ -626,11 +580,7 @@ impl App {
         self.pending_inspect = None;
         match text {
             Some(text) if !text.trim().is_empty() => {
-                self.pager = Some(Pager {
-                    title: "docs".into(),
-                    text,
-                    top: 0,
-                })
+                self.pager = Some(Pager { title: "docs".into(), text, top: 0 })
             }
             _ => {
                 self.message = Some(
@@ -645,8 +595,10 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::tests::{key, labels, one_cell_app};
-    use crate::kernel::Event;
+    use crate::{
+        app::tests::{key, labels, one_cell_app},
+        kernel::Event,
+    };
 
     #[test]
     fn completion_applies_single_match_filters_while_typing_and_goes_stale() {
@@ -675,24 +627,14 @@ mod tests {
         let reply = |app: &mut App, r: &mut Rendered, id: &str, m: &[&str]| {
             let matches = m.iter().map(|s| s.to_string()).collect();
             app.apply_kernel_event(
-                Event::Complete {
-                    parent: id.into(),
-                    matches,
-                    start: 0,
-                    types: HashMap::new(),
-                },
+                Event::Complete { parent: id.into(), matches, start: 0, types: HashMap::new() },
                 r,
             );
         };
         let src = |app: &App| app.editor.as_ref().unwrap().source();
         // several (deduplicated) matches open the popup
         pending(&mut app, "q1");
-        reply(
-            &mut app,
-            &mut r,
-            "q1",
-            &["print", "property", "print", "pow"],
-        );
+        reply(&mut app, &mut r, "q1", &["print", "property", "print", "pow"]);
         assert_eq!(labels(&app), ["print", "property"]);
         // typing keeps it open and filters; Enter accepts over what was typed
         app.on_key(key('o'), &mut r);
@@ -754,12 +696,7 @@ mod tests {
         let reply = |app: &mut App, r: &mut Rendered, m: &[&str], start: usize| {
             let matches = m.iter().map(|s| s.to_string()).collect();
             app.apply_kernel_event(
-                Event::Complete {
-                    parent: "q".into(),
-                    matches,
-                    start,
-                    types: HashMap::new(),
-                },
+                Event::Complete { parent: "q".into(), matches, start, types: HashMap::new() },
                 r,
             );
         };
@@ -772,16 +709,9 @@ mod tests {
         // unexecuted import: notebook names first, then the kernel's
         let at = open(&mut app, "import numpy as np\nn");
         reply(&mut app, &mut r, &["next", "not"], at - 1);
-        assert_eq!(
-            labels(&app),
-            ["np", "numpy", "next", "not"],
-            "nearest name first"
-        );
+        assert_eq!(labels(&app), ["np", "numpy", "next", "not"], "nearest name first");
         // words in strings and comments are not names
-        assert_eq!(
-            identifiers("x = 'never mind'  # nope\nyes_1 = \"a\\\"b\""),
-            ["yes_1"]
-        );
+        assert_eq!(identifiers("x = 'never mind'  # nope\nyes_1 = \"a\\\"b\""), ["yes_1"]);
         // even when the kernel knows nothing, notebook names still come
         let at = open(&mut app, "value_1 = 3\nval");
         reply(&mut app, &mut r, &[], at);
@@ -804,17 +734,11 @@ mod tests {
             ("function".to_string(), "(start, stop, num=50)".to_string())
         );
         let int = "\x1b[31mType:\x1b[39m        int\n\x1b[31mString form:\x1b[39m 3\n\x1b[31mDocstring:\x1b[39m  int([x]) -> integer";
-        assert_eq!(
-            parse_inspect(int),
-            ("instance".to_string(), "int".to_string())
-        );
+        assert_eq!(parse_inspect(int), ("instance".to_string(), "int".to_string()));
         let module =
             "\x1b[31mType:\x1b[39m        module\n\x1b[31mString form:\x1b[39m <module 'os'>";
         assert_eq!(parse_inspect(module).0, "module");
-        assert_eq!(
-            splice("np.lin", 2, 6, ".linspace"),
-            ("np.linspace".to_string(), 11)
-        );
+        assert_eq!(splice("np.lin", 2, 6, ".linspace"), ("np.linspace".to_string(), 11));
     }
 
     #[test]
@@ -839,10 +763,8 @@ mod tests {
             top: 0,
             detail_reqs: HashMap::new(),
         });
-        let types = HashMap::from([(
-            ".linspace".to_string(),
-            ("attribute".to_string(), String::new()),
-        )]);
+        let types =
+            HashMap::from([(".linspace".to_string(), ("attribute".to_string(), String::new()))]);
         app.apply_kernel_event(
             Event::Complete {
                 parent: "q".into(),
@@ -852,35 +774,21 @@ mod tests {
             },
             &mut r,
         );
-        assert_eq!(
-            labels(&app),
-            ["linalg", "linspace"],
-            "shown without the dot"
-        );
+        assert_eq!(labels(&app), ["linalg", "linspace"], "shown without the dot");
         app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &mut r);
         // Shift+Tab: docs (here: no kernel), selection untouched, popup stays
         app.on_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT), &mut r);
         assert_eq!(app.message.as_deref(), Some("no kernel — docs need one"));
         assert_eq!(app.completion.as_ref().unwrap().sel, 1);
         // a detail reply fills kind + signature of that candidate
-        app.completion
-            .as_mut()
-            .unwrap()
-            .detail_reqs
-            .insert("i1".into(), ".linspace".into());
+        app.completion.as_mut().unwrap().detail_reqs.insert("i1".into(), ".linspace".into());
         let doc = "Signature: np.linspace(start, stop)\nType:      function";
         app.apply_kernel_event(
-            Event::Inspect {
-                parent: "i1".into(),
-                text: Some(doc.into()),
-            },
+            Event::Inspect { parent: "i1".into(), text: Some(doc.into()) },
             &mut r,
         );
         let item = &app.completion.as_ref().unwrap().items[1];
-        assert_eq!(
-            (item.kind.as_str(), item.detail.as_str()),
-            ("function", "(start, stop)")
-        );
+        assert_eq!((item.kind.as_str(), item.detail.as_str()), ("function", "(start, stop)"));
     }
 
     #[test]
@@ -896,10 +804,7 @@ mod tests {
         app.completion = Some(c);
         assert_eq!(
             app.accepted_code(0),
-            Some((
-                "np.linspace\nplt.subplots(figsize=(10, 10))".to_string(),
-                11
-            )),
+            Some(("np.linspace\nplt.subplots(figsize=(10, 10))".to_string(), 11)),
             "the rest of the cell must survive intact"
         );
         // the resolve window is the draw's window

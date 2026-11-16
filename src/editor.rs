@@ -84,11 +84,7 @@ impl Editor {
         self.snapshot();
         let src = self.source();
         let byte = |ci: usize| src.char_indices().nth(ci).map_or(src.len(), |(b, _)| b);
-        let new = format!(
-            "{}{text}{}",
-            &src[..byte(start)],
-            &src[byte(end.max(start))..]
-        );
+        let new = format!("{}{text}{}", &src[..byte(start)], &src[byte(end.max(start))..]);
         let caret: String = new.chars().take(start + text.chars().count()).collect();
         self.lines = new.split('\n').map(String::from).collect();
         let row = caret.matches('\n').count();
@@ -142,13 +138,9 @@ impl Editor {
     pub fn input(&mut self, key: KeyEvent) -> Outcome {
         // run bindings work in both modes
         if key.code == KeyCode::Enter
-            && key
-                .modifiers
-                .intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL)
+            && key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL)
         {
-            return Outcome::Run {
-                advance: key.modifiers.contains(KeyModifiers::SHIFT),
-            };
+            return Outcome::Run { advance: key.modifiers.contains(KeyModifiers::SHIFT) };
         }
         match self.mode {
             Mode::Insert => self.input_insert(key),
@@ -243,11 +235,8 @@ impl Editor {
                 KeyCode::Char('0') => self.cursor.1 = 0,
                 KeyCode::Char('$') => self.cursor.1 = self.max_col(),
                 KeyCode::Char('^') => {
-                    self.cursor.1 = self
-                        .line()
-                        .chars()
-                        .position(|c| !c.is_whitespace())
-                        .unwrap_or(0)
+                    self.cursor.1 =
+                        self.line().chars().position(|c| !c.is_whitespace()).unwrap_or(0)
                 }
                 KeyCode::Char('G') => {
                     self.cursor.0 = self.lines.len() - 1;
@@ -353,10 +342,7 @@ impl Editor {
         }
         if i >= chars.len() && row + 1 < self.lines.len() {
             row += 1;
-            col = self.lines[row]
-                .chars()
-                .position(|c| !c.is_whitespace())
-                .unwrap_or(0);
+            col = self.lines[row].chars().position(|c| !c.is_whitespace()).unwrap_or(0);
         } else {
             col = i;
         }
@@ -408,8 +394,9 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crossterm::event::KeyModifiers;
+
+    use super::*;
 
     fn key(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
@@ -474,10 +461,7 @@ mod tests {
         assert_eq!(e.source(), "import numpy\nx");
         assert_eq!(e.cursor, (0, 12));
         e.replace_chars(13, 14, "yy"); // row 1
-        assert_eq!(
-            (e.source().as_str(), e.cursor),
-            ("import numpy\nyy", (1, 2))
-        );
+        assert_eq!((e.source().as_str(), e.cursor), ("import numpy\nyy", (1, 2)));
         e.input(code(KeyCode::Esc));
         e.input(key('u'));
         assert_eq!(e.source(), "import numpy\nx");

@@ -1,16 +1,18 @@
 //! Kernel lifecycle + wire protocol. The UI owns a `Kernel` handle and an
 //! `mpsc::Receiver<Event>`; three small tokio tasks pump the sockets.
 
+use std::{collections::HashMap, path::PathBuf};
+
 use anyhow::{Context, Result, anyhow};
-use jupyter_protocol::messaging::{
-    CompleteRequest, ExecuteRequest, ExecutionState, InputReply, InspectRequest, InterruptRequest,
-    JupyterMessage, JupyterMessageContent, ReplyStatus,
+use jupyter_protocol::{
+    ConnectionInfo, Transport,
+    messaging::{
+        CompleteRequest, ExecuteRequest, ExecutionState, InputReply, InspectRequest,
+        InterruptRequest, JupyterMessage, JupyterMessageContent, ReplyStatus,
+    },
 };
-use jupyter_protocol::{ConnectionInfo, Transport};
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 /// Kernel-side happenings, applied to app state in the main loop.
@@ -21,11 +23,7 @@ pub enum Event {
     LaunchFailed { launch: u64, reason: String },
     /// Launch `launch` found no kernelspec named `wanted`; `kernels` are the
     /// installed ones as (name, language), for the user to pick from.
-    NotFound {
-        launch: u64,
-        wanted: String,
-        kernels: Vec<(String, String)>,
-    },
+    NotFound { launch: u64, wanted: String, kernels: Vec<(String, String)> },
     /// nbformat-shaped output object for the cell that sent `parent`.
     Output { parent: String, output: Value },
     /// `execute_input` arrived: the kernel assigned an execution count.
@@ -44,18 +42,11 @@ pub enum Event {
         types: HashMap<String, (String, String)>,
     },
     /// inspect_reply: `text` is the text/plain doc (may carry ANSI colors).
-    Inspect {
-        parent: String,
-        text: Option<String>,
-    },
+    Inspect { parent: String, text: Option<String> },
     /// clear_output arrived; with `wait` the clear is deferred to next output.
     Clear { parent: String, wait: bool },
     /// The kernel asked for user input (`input()`); reply via `Kernel::reply_input`.
-    Input {
-        request: Box<JupyterMessage>,
-        prompt: String,
-        password: bool,
-    },
+    Input { request: Box<JupyterMessage>, prompt: String, password: bool },
     /// iopub status: kernel busy/idle while handling request `parent`.
     Status { parent: String, busy: bool },
     /// execute_reply arrived (the execution ends once its idle status is in too).
@@ -91,11 +82,9 @@ pub struct Kernel {
 /// `share/jupyter` of every `.venv`/`venv` from the notebook's directory
 /// upwards, nearest first (existing or not).
 fn project_venv_dirs(notebook_dir: &std::path::Path) -> impl Iterator<Item = PathBuf> + '_ {
-    notebook_dir.ancestors().flat_map(|dir| {
-        [".venv", "venv"]
-            .iter()
-            .map(move |v| dir.join(v).join("share/jupyter"))
-    })
+    notebook_dir
+        .ancestors()
+        .flat_map(|dir| [".venv", "venv"].iter().map(move |v| dir.join(v).join("share/jupyter")))
 }
 
 /// Every installed kernelspec, best first; a name resolves to its first
@@ -151,11 +140,7 @@ impl Kernel {
                     kernels.push((s.kernel_name, s.kernelspec.language));
                 }
             }
-            let _ = tx.send(Event::NotFound {
-                launch,
-                wanted: name,
-                kernels,
-            });
+            let _ = tx.send(Event::NotFound { launch, wanted: name, kernels });
             return;
         };
         match Self::launch_inner(specs.swap_remove(at), &name, &notebook_dir, tx.clone()).await {
@@ -188,9 +173,8 @@ impl Kernel {
         let interrupt_via_message = spec.kernelspec.interrupt_mode.as_deref() == Some("message");
 
         let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
-        let ports = jupyter_zmq_client::peek_ports(ip, 5)
-            .await
-            .map_err(|e| anyhow!("free ports: {e}"))?;
+        let ports =
+            jupyter_zmq_client::peek_ports(ip, 5).await.map_err(|e| anyhow!("free ports: {e}"))?;
         let session = uuid::Uuid::new_v4().to_string();
         let info = ConnectionInfo {
             ip: "127.0.0.1".into(),
@@ -223,10 +207,7 @@ impl Kernel {
         cmd.kill_on_drop(true);
         let mut child = cmd.spawn().context("spawning kernel process")?;
         let pid = child.id();
-        log::info!(
-            "kernel spawned, pid {pid:?}, connection file {}",
-            connection_file.display()
-        );
+        log::info!("kernel spawned, pid {pid:?}, connection file {}", connection_file.display());
 
         // Keep the last stderr line: it's the diagnosis when the kernel dies
         // (and the pipe must be drained anyway or the kernel could block).
@@ -385,13 +366,8 @@ impl Kernel {
                     while let Ok(next) = shell_rx.try_recv() {
                         if stops_on_error(&next) {
                             let parent = next.header.msg_id;
-                            let _ = abort_tx.send(Event::Done {
-                                parent: parent.clone(),
-                            });
-                            let _ = abort_tx.send(Event::Status {
-                                parent,
-                                busy: false,
-                            });
+                            let _ = abort_tx.send(Event::Done { parent: parent.clone() });
+                            let _ = abort_tx.send(Event::Status { parent, busy: false });
                         } else {
                             kept.push_back(next);
                         }
@@ -545,19 +521,12 @@ impl Kernel {
 
     /// Queue a complete_request; `cursor_pos` counts unicode code points.
     pub fn complete(&self, code: String, cursor_pos: usize) -> String {
-        self.shell(JupyterMessage::new(
-            CompleteRequest { code, cursor_pos },
-            None,
-        ))
+        self.shell(JupyterMessage::new(CompleteRequest { code, cursor_pos }, None))
     }
 
     /// Queue an inspect_request (Shift+Tab docs) at `cursor_pos`.
     pub fn inspect(&self, code: String, cursor_pos: usize) -> String {
-        let req = InspectRequest {
-            code,
-            cursor_pos,
-            detail_level: Some(0),
-        };
+        let req = InspectRequest { code, cursor_pos, detail_level: Some(0) };
         self.shell(JupyterMessage::new(req, None))
     }
 
@@ -571,14 +540,8 @@ impl Kernel {
 
     /// Answer an `input_request` (must be a child of the request message).
     pub fn reply_input(&self, request: &JupyterMessage, value: String) {
-        let reply = JupyterMessage::new(
-            InputReply {
-                value,
-                ..Default::default()
-            },
-            Some(request),
-        )
-        .with_session(&self.session);
+        let reply = JupyterMessage::new(InputReply { value, ..Default::default() }, Some(request))
+            .with_session(&self.session);
         let _ = self.stdin_tx.send(reply);
     }
 
@@ -609,12 +572,7 @@ fn completion_types(meta: &serde_json::Map<String, Value>) -> HashMap<String, (S
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .map(|e| {
-            (
-                str_of(e, "text"),
-                (str_of(e, "type"), str_of(e, "signature")),
-            )
-        })
+        .map(|e| (str_of(e, "text"), (str_of(e, "type"), str_of(e, "signature"))))
         .collect()
 }
 
@@ -630,22 +588,16 @@ const REPLY_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 /// came: the same as an empty one.
 fn no_reply(kind: &str, parent: String) -> Event {
     match kind {
-        "complete_request" => Event::Complete {
-            parent,
-            matches: Vec::new(),
-            start: 0,
-            types: HashMap::new(),
-        },
+        "complete_request" => {
+            Event::Complete { parent, matches: Vec::new(), start: 0, types: HashMap::new() }
+        }
         "inspect_request" => Event::Inspect { parent, text: None },
         _ => Event::Done { parent },
     }
 }
 
 fn parent_id(msg: &JupyterMessage) -> String {
-    msg.parent_header
-        .as_ref()
-        .map(|h| h.msg_id.clone())
-        .unwrap_or_default()
+    msg.parent_header.as_ref().map(|h| h.msg_id.clone()).unwrap_or_default()
 }
 
 fn translate_iopub(msg: JupyterMessage) -> Option<Event> {
@@ -663,18 +615,14 @@ fn translate_iopub(msg: JupyterMessage) -> Option<Event> {
             }
         }
         C::ErrorOutput(x) => nb_output(parent, "error", x),
-        C::ClearOutput(x) => Some(Event::Clear {
-            parent,
-            wait: x.wait,
-        }),
+        C::ClearOutput(x) => Some(Event::Clear { parent, wait: x.wait }),
         C::ExecuteInput(x) => {
             let count = serde_json::to_value(x.execution_count).ok()?.as_i64()?;
             Some(Event::ExecutionCount { parent, count })
         }
-        C::Status(x) => Some(Event::Status {
-            parent,
-            busy: matches!(x.execution_state, ExecutionState::Busy),
-        }),
+        C::Status(x) => {
+            Some(Event::Status { parent, busy: matches!(x.execution_state, ExecutionState::Busy) })
+        }
         _ => None,
     }
 }
@@ -766,18 +714,11 @@ mod tests {
         let code = "import os\nos.getc";
         let id = kernel.complete(code.into(), code.chars().count());
         loop {
-            if let Event::Complete {
-                parent,
-                matches,
-                start,
-                ..
-            } = next().await
+            if let Event::Complete { parent, matches, start, .. } = next().await
                 && parent == id
             {
                 assert!(
-                    matches
-                        .iter()
-                        .any(|m| m.trim_start_matches('.') == "getcwd"),
+                    matches.iter().any(|m| m.trim_start_matches('.') == "getcwd"),
                     "{matches:?}"
                 );
                 assert!(start == 13 || start == 12, "token start {start}");

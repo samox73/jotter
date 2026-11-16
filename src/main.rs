@@ -11,18 +11,21 @@ mod percent;
 mod recolor;
 mod ui;
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use app::{Action, App};
 use clap::{CommandFactory, Parser};
-use crossterm::cursor::SetCursorStyle;
-use crossterm::event::{
-    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
-    EnableFocusChange, EnableMouseCapture, Event, EventStream, KeyEventKind,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+use crossterm::{
+    cursor::SetCursorStyle,
+    event::{
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture, Event, EventStream, KeyEventKind,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
+    terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
 };
-use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use futures::{FutureExt, StreamExt};
-use std::path::PathBuf;
 use tokio::sync::mpsc;
 use ui::Rendered;
 
@@ -194,9 +197,8 @@ async fn run(
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut cursor_mode: Option<nvim::ModeKind> = None;
     // Autosave sidecar tick; writes only when something changed since last time.
-    let mut autosave = tokio::time::interval(std::time::Duration::from_secs(
-        config::get().autosave_secs.max(1),
-    ));
+    let mut autosave =
+        tokio::time::interval(std::time::Duration::from_secs(config::get().autosave_secs.max(1)));
     while !app.should_quit {
         // modal cursor shape: block in normal, bar in insert, underline in replace
         let mode = app.editor.as_ref().map(|e| e.mode());
@@ -314,10 +316,7 @@ fn on_term_event(app: &mut App, rendered: &mut Rendered, event: Event) -> Action
 /// `~/bin/ed`. The file travels as `$1`, so the shell never re-parses it.
 fn editor_command(editor: &str, file: &std::path::Path) -> std::process::Command {
     let mut c = std::process::Command::new("sh");
-    c.arg("-c")
-        .arg(format!("{editor} \"$@\""))
-        .arg("jotter")
-        .arg(file);
+    c.arg("-c").arg(format!("{editor} \"$@\"")).arg("jotter").arg(file);
     c
 }
 
@@ -353,9 +352,7 @@ fn external_edit(
         },
         // sh's own "not found" line is wiped by clear_screen(), so say it ourselves
         Ok(status) if status.code() == Some(127) => {
-            app.message = Some(format!(
-                "{editor_cmd}: command not found (check $VISUAL/$EDITOR)"
-            ));
+            app.message = Some(format!("{editor_cmd}: command not found (check $VISUAL/$EDITOR)"));
         }
         Ok(status) => app.message = Some(format!("{editor_cmd} exited with {status}")),
         Err(e) => app.message = Some(format!("{editor_cmd} failed: {e}")),
@@ -390,13 +387,7 @@ mod tests {
         };
         let mut queued = Vec::new();
         queue_kernel_event(&mut queued, update("a", 1));
-        queue_kernel_event(
-            &mut queued,
-            kernel::Event::Clear {
-                parent: "p".into(),
-                wait: false,
-            },
-        );
+        queue_kernel_event(&mut queued, kernel::Event::Clear { parent: "p".into(), wait: false });
         queue_kernel_event(&mut queued, update("b", 2));
         queue_kernel_event(&mut queued, update("a", 3));
         let seen: Vec<String> = queued

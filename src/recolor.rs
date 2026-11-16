@@ -7,8 +7,9 @@
 //! The terminal's colours come from an OSC 10/11 query at startup; terminals
 //! that don't answer get no recolouring.
 
-use image::{DynamicImage, RgbaImage};
 use std::sync::OnceLock;
+
+use image::{DynamicImage, RgbaImage};
 
 /// Terminal foreground and background, sRGB 0..1.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -51,11 +52,7 @@ pub fn query() -> (Option<Palette>, bool) {
         if left.is_zero() {
             break;
         }
-        let mut fd = libc::pollfd {
-            fd: libc::STDIN_FILENO,
-            events: libc::POLLIN,
-            revents: 0,
-        };
+        let mut fd = libc::pollfd { fd: libc::STDIN_FILENO, events: libc::POLLIN, revents: 0 };
         // SAFETY: one valid pollfd; read into a stack buffer of the given size
         if unsafe { libc::poll(&mut fd, 1, left.as_millis() as i32) } <= 0 {
             break;
@@ -80,9 +77,7 @@ fn has_keyboard_flags(buf: &[u8]) -> bool {
 
 /// DA1 reply: `ESC [ ? … c`.
 fn has_da1(buf: &[u8]) -> bool {
-    buf.windows(3)
-        .position(|w| w == b"\x1b[?")
-        .is_some_and(|i| buf[i..].contains(&b'c'))
+    buf.windows(3).position(|w| w == b"\x1b[?").is_some_and(|i| buf[i..].contains(&b'c'))
 }
 
 /// Both colours from a reply buffer, e.g.
@@ -91,10 +86,8 @@ fn parse_reply(buf: &[u8]) -> Option<Palette> {
     let text = String::from_utf8_lossy(buf);
     let color = |code: &str| -> Option<[f32; 3]> {
         let start = text.find(&format!("\x1b]{code};rgb:"))? + code.len() + 7;
-        let spec: String = text[start..]
-            .chars()
-            .take_while(|c| c.is_ascii_hexdigit() || *c == '/')
-            .collect();
+        let spec: String =
+            text[start..].chars().take_while(|c| c.is_ascii_hexdigit() || *c == '/').collect();
         let mut rgb = [0.0; 3];
         let mut parts = spec.split('/');
         for c in &mut rgb {
@@ -104,10 +97,7 @@ fn parse_reply(buf: &[u8]) -> Option<Palette> {
         }
         Some(rgb)
     };
-    Some(Palette {
-        fg: color("10")?,
-        bg: color("11")?,
-    })
+    Some(Palette { fg: color("10")?, bg: color("11")? })
 }
 
 /// Recolour `img` if it looks like a plot on a white background and the
@@ -160,9 +150,7 @@ mod keyboard_tests {
     #[test]
     fn keyboard_flags_reply_is_told_from_da1() {
         assert!(has_keyboard_flags(b"\x1b[?0u\x1b[?62;22c"));
-        assert!(has_keyboard_flags(
-            b"\x1b]11;rgb:2b/30/3b\x07\x1b[?1u\x1b[?62c"
-        ));
+        assert!(has_keyboard_flags(b"\x1b]11;rgb:2b/30/3b\x07\x1b[?1u\x1b[?62c"));
         assert!(!has_keyboard_flags(b"\x1b[?62;22c"));
         assert!(!has_keyboard_flags(b"\x1b[?62;4c\x1b[0n"));
     }

@@ -1,10 +1,11 @@
 //! nbformat 4.x model. Only what we touch is typed; everything else lives in
 //! `extra` flatten maps so foreign metadata round-trips losslessly.
 
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Notebook {
@@ -47,12 +48,7 @@ impl Cell {
         extra.insert("id".into(), new_cell_id().into());
         extra.insert("metadata".into(), Value::Object(Map::new()));
         extra.insert("execution_count".into(), Value::Null);
-        Cell {
-            cell_type: "code".into(),
-            source: String::new(),
-            outputs: Some(Vec::new()),
-            extra,
-        }
+        Cell { cell_type: "code".into(), source: String::new(), outputs: Some(Vec::new()), extra }
     }
 
     pub fn execution_count(&self) -> Option<i64> {
@@ -136,11 +132,7 @@ impl Notebook {
         extra.insert("metadata".into(), Value::Object(Map::new()));
         extra.insert("nbformat".into(), 4.into());
         extra.insert("nbformat_minor".into(), 5.into());
-        Notebook {
-            cells: vec![Cell::new_code()],
-            extra,
-            header: None,
-        }
+        Notebook { cells: vec![Cell::new_code()], extra, header: None }
     }
 
     /// Read `path` in the format its extension says (`.py`: percent or a
@@ -176,9 +168,7 @@ impl Notebook {
             self.extra.insert("nbformat_minor".into(), 5.into());
         }
         for cell in &mut self.cells {
-            cell.extra
-                .entry("id")
-                .or_insert_with(|| new_cell_id().into());
+            cell.extra.entry("id").or_insert_with(|| new_cell_id().into());
         }
     }
 
@@ -230,10 +220,8 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_file_name(name);
     let mut f =
         std::fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
-    f.write_all(bytes)
-        .with_context(|| format!("writing {}", tmp.display()))?;
-    f.sync_all()
-        .with_context(|| format!("syncing {}", tmp.display()))?;
+    f.write_all(bytes).with_context(|| format!("writing {}", tmp.display()))?;
+    f.sync_all().with_context(|| format!("syncing {}", tmp.display()))?;
     drop(f);
     std::fs::rename(&tmp, path).with_context(|| format!("renaming onto {}", path.display()))?;
     Ok(())
@@ -380,20 +368,14 @@ mod tests {
     #[test]
     fn save_strips_in_memory_transient() {
         let mut nb = Notebook::new_empty();
-        nb.cells[0].push_output(
-            serde_json::json!({"output_type": "display_data", "data": {},
-            "metadata": {}, "transient": {"display_id": "d1"}}),
-        );
+        nb.cells[0].push_output(serde_json::json!({"output_type": "display_data", "data": {},
+            "metadata": {}, "transient": {"display_id": "d1"}}));
         let path = std::env::temp_dir().join(format!("jotter-tr-{}.ipynb", std::process::id()));
         nb.save(&path).unwrap();
         let saved = std::fs::read_to_string(&path).unwrap();
         std::fs::remove_file(&path).ok();
         assert!(!saved.contains("transient"), "{saved}");
-        assert!(
-            nb.cells[0].outputs.as_ref().unwrap()[0]
-                .get("transient")
-                .is_some()
-        );
+        assert!(nb.cells[0].outputs.as_ref().unwrap()[0].get("transient").is_some());
     }
 
     #[test]
@@ -406,11 +388,7 @@ mod tests {
         .unwrap();
         nb.upgrade_to_4_5();
         assert_eq!(nb.extra["nbformat_minor"], 5);
-        assert!(
-            nb.cells[0].extra["id"]
-                .as_str()
-                .is_some_and(|id| id.len() == 8)
-        );
+        assert!(nb.cells[0].extra["id"].as_str().is_some_and(|id| id.len() == 8));
         assert_eq!(nb.cells[1].extra["id"], "keep");
     }
 
