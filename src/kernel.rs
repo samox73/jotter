@@ -319,11 +319,15 @@ impl Kernel {
         // for each reply costs nothing.
         let (mut shell_send, mut shell_recv) = shell.split();
         let (shell_tx, mut shell_rx) = mpsc::unbounded_channel::<JupyterMessage>();
-        // (parent, the reply was a failed execute)
-        let (replied_tx, mut replied_rx) = mpsc::unbounded_channel::<(String, bool)>();
+        // (parent, the reply was a failed execute); no parent: a reply that
+        // couldn't be decoded, which can only be the in-flight request's
+        let (replied_tx, mut replied_rx) = mpsc::unbounded_channel::<(Option<String>, bool)>();
         let abort_tx = tx.clone();
         tokio::spawn(async move {
             let mut kept = std::collections::VecDeque::new();
+            // request types this kernel has left unanswered (evcxr: inspect):
+            // not sent again, or each would hold up the runs behind it
+            let mut unanswered: Vec<String> = Vec::new();
             loop {
                 let msg = match kept.pop_front() {
                     Some(msg) => msg,
@@ -333,16 +337,46 @@ impl Kernel {
                     },
                 };
                 let id = msg.header.msg_id.clone();
+                let kind = msg.header.msg_type.clone();
                 let stops = stops_on_error(&msg);
+                let is_run = matches!(msg.content, JupyterMessageContent::ExecuteRequest(_));
+                if unanswered.contains(&kind) {
+                    let _ = abort_tx.send(no_reply(&kind, id));
+                    continue;
+                }
                 if shell_send.send(msg).await.is_err() {
                     break;
                 }
-                let failed = loop {
-                    match replied_rx.recv().await {
-                        Some((parent, failed)) if parent == id => break failed,
-                        Some(_) => {}   // a reply to someone else's request
-                        None => return, // reply pump gone: connection lost
+                let reply = async {
+                    loop {
+                        match replied_rx.recv().await {
+                            Some((Some(parent), failed)) if parent == id => break Some(failed),
+                            Some((None, _)) => {
+                                let _ = abort_tx.send(no_reply(&kind, id.clone()));
+                                break Some(true);
+                            }
+                            Some(_) => {} // a late reply to a request given up on
+                            None => break None,
+                        }
                     }
+                };
+                // a run takes as long as it takes; anything else is answered
+                // promptly or (by some kernels) never
+                let reply = if is_run {
+                    reply.await
+                } else {
+                    match tokio::time::timeout(REPLY_WAIT, reply).await {
+                        Ok(reply) => reply,
+                        Err(_) => {
+                            log::warn!("no reply to {kind} in {REPLY_WAIT:?}: not asking again");
+                            let _ = abort_tx.send(no_reply(&kind, id));
+                            unanswered.push(kind);
+                            Some(false)
+                        }
+                    }
+                };
+                let Some(failed) = reply else {
+                    return; // reply pump gone: connection lost
                 };
                 // stop_on_error: the kernel only aborts runs it has queued,
                 // which is none now, so skip the ones queued here instead,
@@ -367,13 +401,22 @@ impl Kernel {
         });
         let reply_tx = tx.clone();
         tokio::spawn(async move {
+            use jupyter_zmq_client::RuntimeError;
             loop {
                 let msg = match shell_recv.read().await {
                     Ok(msg) => msg,
-                    Err(e) => {
+                    Err(e @ (RuntimeError::ZmqError(_) | RuntimeError::IoError(_))) => {
                         log::warn!("shell read failed: {e}");
                         let _ = reply_tx.send(Event::Info(format!("kernel connection lost: {e}")));
                         break;
+                    }
+                    // a reply this client can't decode (IRkernel answers an
+                    // interrupted run with status "abort"): the request is
+                    // over all the same
+                    Err(e) => {
+                        log::warn!("undecodable shell reply: {e}");
+                        let _ = replied_tx.send((None, true));
+                        continue;
                     }
                 };
                 let parent = parent_id(&msg);
@@ -381,7 +424,7 @@ impl Kernel {
                     &msg.content,
                     JupyterMessageContent::ExecuteReply(x) if x.status != ReplyStatus::Ok
                 );
-                let _ = replied_tx.send((parent.clone(), failed)); // next request may go
+                let _ = replied_tx.send((Some(parent.clone()), failed)); // next request may go
                 let event = match msg.content {
                     JupyterMessageContent::ExecuteReply(_) => Event::Done { parent },
                     JupyterMessageContent::CompleteReply(x) => Event::Complete {
@@ -578,6 +621,24 @@ fn completion_types(meta: &serde_json::Map<String, Value>) -> HashMap<String, (S
 /// A run that should skip the runs queued behind it when it fails.
 fn stops_on_error(msg: &JupyterMessage) -> bool {
     matches!(&msg.content, JupyterMessageContent::ExecuteRequest(x) if x.stop_on_error)
+}
+
+/// How long a complete/inspect request may hold up the requests behind it.
+const REPLY_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// What the UI gets for request `parent` of type `kind` when no usable reply
+/// came: the same as an empty one.
+fn no_reply(kind: &str, parent: String) -> Event {
+    match kind {
+        "complete_request" => Event::Complete {
+            parent,
+            matches: Vec::new(),
+            start: 0,
+            types: HashMap::new(),
+        },
+        "inspect_request" => Event::Inspect { parent, text: None },
+        _ => Event::Done { parent },
+    }
 }
 
 fn parent_id(msg: &JupyterMessage) -> String {

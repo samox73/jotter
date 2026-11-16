@@ -476,7 +476,8 @@ pub fn is_latex_raw(cell: &Cell) -> bool {
 
 impl Rendered {
     pub fn build(nb: &Notebook, picker: Option<Picker>, dir: std::path::PathBuf) -> Self {
-        let ps = SyntaxSet::load_defaults_newlines();
+        // syntect's own set plus bat's: Julia, TOML, TypeScript, ...
+        let ps = two_face::syntax::extra_newlines();
         let mut themes = ThemeSet::load_defaults().themes;
         let theme = themes
             .remove(&crate::config::get().theme)
@@ -718,12 +719,20 @@ impl Rendered {
         };
         let src_lines = lines.len();
         for output in cell.outputs.iter().flatten() {
+            let data = output.get("data");
+            // A kernel that offers text/html means latex and markdown as
+            // stand-ins for it (IRkernel sends all of them for `1:3`, the
+            // markdown being a numbered list): text/plain reads better here.
+            let typeset = data.is_none_or(|d| d.get("text/html").is_none());
             if let Some(img) = self
                 .try_image(output, full_images, est)
-                .or_else(|| self.try_latex(output, est))
+                .or_else(|| typeset.then(|| self.try_latex(output, est))?)
             {
                 self.push_image(img, &mut lines, &mut images);
-            } else if let Some(md) = output.get("data").and_then(|d| d.get("text/markdown")) {
+            } else if let Some(md) = data
+                .and_then(|d| d.get("text/markdown"))
+                .filter(|_| typeset)
+            {
                 let (md_lines, md_images, _) = self.render_markdown(&join_multiline(md), None, est);
                 let base = lines.len();
                 lines.extend(md_lines);
@@ -3301,6 +3310,69 @@ mod tests {
         assert!(footer);
         assert_eq!(shown, max_output_rows() + rows);
         assert_eq!(start, block.out_len() - shown);
+    }
+
+    #[test]
+    fn julia_r_and_rust_cells_have_a_syntax_and_an_editor_suffix() {
+        for (lang, ext) in [("julia", "jl"), ("r", "R"), ("rust", "rs")] {
+            let cell: Cell = serde_json::from_value(serde_json::json!({
+                "cell_type": "code", "metadata": {}, "source": "x = 1", "outputs": []
+            }))
+            .unwrap();
+            let mut extra = serde_json::Map::new();
+            extra.insert(
+                "metadata".into(),
+                serde_json::json!({"kernelspec": {"language": lang}}),
+            );
+            let nb = Notebook {
+                cells: vec![cell],
+                extra,
+                header: None,
+            };
+            let r = Rendered::build(&nb, None, Default::default());
+            assert!(r.ps.find_syntax_by_token(lang).is_some(), "{lang}");
+            assert_eq!(r.edit_suffix(&nb.cells[0]), ext, "{lang}");
+        }
+    }
+
+    #[test]
+    fn html_capable_outputs_show_their_plain_text() {
+        // IRkernel's bundle for `c(1, 4, 9)`; without text/html (IPython's
+        // Markdown()) the markdown is what the user asked for
+        let text = |data: Value| -> String {
+            let cell: Cell = serde_json::from_value(serde_json::json!({
+                "cell_type": "code", "metadata": {}, "source": "x",
+                "outputs": [{"output_type": "execute_result", "metadata": {}, "data": data}]
+            }))
+            .unwrap();
+            let nb = Notebook {
+                cells: vec![cell],
+                extra: serde_json::Map::new(),
+                header: None,
+            };
+            let mut r = Rendered::build(&nb, None, Default::default());
+            r.ensure(0, &nb.cells[0]);
+            let lines = r.blocks[0].lines.iter();
+            lines
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let r_vector = text(serde_json::json!({
+            "text/html": "<ol><li>1</li><li>4</li><li>9</li></ol>",
+            "text/markdown": "1. 1\n2. 4\n3. 9",
+            "text/latex": "\\begin{enumerate}\\item 1\\end{enumerate}",
+            "text/plain": "[1] 1 4 9"
+        }));
+        assert!(r_vector.contains("[1] 1 4 9"), "{r_vector}");
+        let markdown =
+            text(serde_json::json!({"text/markdown": "**b**", "text/plain": "<Markdown>"}));
+        assert!(!markdown.contains("<Markdown>"), "{markdown}");
     }
 
     #[test]

@@ -153,8 +153,9 @@ def main [
     let out = $repo | path join docs public media
     mkdir $out
     let names = if ($scenes | is-empty) {
-        # bench-* scenes measure instead of recording: only when named
-        ls ($media | path join scenes) | get name | path parse | get stem | where {|n| not ($n | str starts-with bench-) } | sort
+        # bench-* scenes measure and lang-* scenes test instead of recording:
+        # only when named
+        ls ($media | path join scenes) | get name | path parse | get stem | where {|n| not ($n =~ '^(bench|lang)-') } | sort
     } else {
         $scenes
     }
