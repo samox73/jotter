@@ -39,6 +39,27 @@ pub enum HitKind {
 }
 
 /// A pending `input()` request from the kernel, answered from the status line.
+/// The notebook's kernel isn't installed: which one to start instead?
+/// Typing filters `kernels`; Enter starts the selected match.
+#[derive(Debug, PartialEq)]
+pub struct KernelPick {
+    pub wanted: String,
+    kernels: Vec<String>,
+    pub filter: String,
+    pub selected: usize,
+}
+
+impl KernelPick {
+    /// Kernels whose name contains the filter, ignoring case.
+    pub fn shown(&self) -> Vec<&String> {
+        let f = self.filter.to_lowercase();
+        self.kernels
+            .iter()
+            .filter(|k| k.to_lowercase().contains(&f))
+            .collect()
+    }
+}
+
 pub struct StdinReq {
     pub prompt: String,
     pub buf: String,
@@ -214,6 +235,7 @@ pub struct App {
     overwrite_armed: Option<PathBuf>,
     /// Kernel is waiting on `input()`.
     pub stdin_req: Option<StdinReq>,
+    pub kernel_pick: Option<KernelPick>,
     pub completion: Option<Completion>,
     /// Signature help for the call the cursor is in.
     pub signature: Option<SigHelp>,
@@ -384,6 +406,7 @@ impl App {
             search: None,
             overwrite_armed: None,
             stdin_req: None,
+            kernel_pick: None,
             completion: None,
             signature: None,
             pending_inspect: None,
@@ -590,6 +613,17 @@ impl App {
             self.events_tx.clone(),
             self.launch,
         ));
+    }
+
+    /// A launch came to nothing: say why and drop the runs waiting for it.
+    fn no_kernel(&mut self, reason: String) {
+        self.kernel_starting = false;
+        let dropped = std::mem::take(&mut self.deferred).len();
+        self.message = Some(if dropped > 0 {
+            format!("{reason} — {dropped} queued run(s) dropped")
+        } else {
+            reason
+        });
     }
 
     /// Kill the kernel and start a fresh one; `run_all` queues every code
@@ -837,6 +871,10 @@ impl App {
             self.on_key_stdin(key);
             return Action::None;
         }
+        if self.kernel_pick.is_some() {
+            self.on_key_kernel_pick(key);
+            return Action::None;
+        }
         if self.prompt.is_some() {
             self.on_key_prompt(key, rendered);
             return Action::None;
@@ -857,6 +895,48 @@ impl App {
     }
 
     /// Keys while the kernel waits on `input()`: typed into the status line.
+    fn on_key_kernel_pick(&mut self, key: KeyEvent) {
+        let Some(pick) = &mut self.kernel_pick else {
+            return;
+        };
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let last = pick.shown().len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc => {
+                self.kernel_pick = None;
+                self.no_kernel("no kernel — R to pick one".into());
+            }
+            KeyCode::Enter => {
+                let Some(name) = pick.shown().get(pick.selected).map(|k| k.to_string()) else {
+                    return; // nothing matches the filter
+                };
+                self.kernel_pick = None;
+                // as in jupyterlab, the choice replaces the notebook's
+                // kernelspec: Ready records the new one for the next w
+                if let Some(meta) = self.notebook.extra.get_mut("metadata")
+                    && let Some(meta) = meta.as_object_mut()
+                {
+                    meta.remove("kernelspec");
+                }
+                self.kernel_name = name;
+                self.spawn_kernel();
+            }
+            KeyCode::Down | KeyCode::Tab => pick.selected = (pick.selected + 1).min(last),
+            KeyCode::Char('n') if ctrl => pick.selected = (pick.selected + 1).min(last),
+            KeyCode::Up | KeyCode::BackTab => pick.selected = pick.selected.saturating_sub(1),
+            KeyCode::Char('p') if ctrl => pick.selected = pick.selected.saturating_sub(1),
+            KeyCode::Backspace => {
+                pick.filter.pop();
+                pick.selected = 0;
+            }
+            KeyCode::Char(c) if !ctrl => {
+                pick.filter.push(c);
+                pick.selected = 0;
+            }
+            _ => {}
+        }
+    }
+
     fn on_key_stdin(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1902,11 +1982,7 @@ impl App {
             }
             Event::Ready(kernel) => {
                 let origin = kernel.spec_dir.display();
-                self.message = Some(if kernel.name == self.kernel_name {
-                    format!("kernel '{}' ready ({origin})", kernel.name)
-                } else {
-                    format!("'{}' not found — using {origin}", self.kernel_name)
-                });
+                self.message = Some(format!("kernel '{}' ready ({origin})", kernel.name));
                 // new notebooks (or ones that never had one) learn their
                 // kernelspec, like jupyter writes it; saved with the next w
                 if let Some(meta) = self
@@ -1944,14 +2020,30 @@ impl App {
                 }
             }
             Event::LaunchFailed { launch, .. } if launch != self.launch => {}
-            Event::LaunchFailed { reason, .. } => {
-                self.kernel_starting = false;
-                let dropped = std::mem::take(&mut self.deferred).len();
-                self.message = Some(if dropped > 0 {
-                    format!("{reason} — {dropped} queued run(s) dropped")
+            Event::LaunchFailed { reason, .. } => self.no_kernel(reason),
+            Event::NotFound { launch, .. } if launch != self.launch => {}
+            Event::NotFound {
+                wanted,
+                mut kernels,
+                ..
+            } => {
+                self.kernel_starting = false; // runs queued so far wait for the pick
+                if kernels.is_empty() {
+                    self.no_kernel(format!(
+                        "kernel '{wanted}' not found, and no other is installed — pip install ipykernel in your venv"
+                    ));
                 } else {
-                    reason
-                });
+                    // kernels for the notebook's language first
+                    let lang = crate::ui::notebook_language(&self.notebook);
+                    kernels.sort_by_key(|(_, l)| !l.eq_ignore_ascii_case(&lang));
+                    self.message = Some(format!("kernel '{wanted}' not found"));
+                    self.kernel_pick = Some(KernelPick {
+                        wanted,
+                        kernels: kernels.into_iter().map(|(n, _)| n).collect(),
+                        filter: String::new(),
+                        selected: 0,
+                    });
+                }
             }
             Event::UpdateDisplay { display_id, output } => {
                 // ponytail: scans every output per update; fine for thousands
@@ -2133,6 +2225,61 @@ pub(super) mod tests {
                 .unwrap()
                 .contains("1 queued run(s) dropped")
         );
+    }
+
+    #[tokio::test] // the pick spawns a launch
+    async fn missing_kernel_asks_which_one_to_start_instead() {
+        let (mut app, mut r) = one_cell_app("pick");
+        app.notebook.extra.insert(
+            "metadata".into(),
+            serde_json::json!({"kernelspec": {"name": "julia-1.11", "language": "julia"}}),
+        );
+        app.kernel_name = "julia-1.11".into();
+        app.launch = 1;
+        let not_found = || Event::NotFound {
+            launch: 1,
+            wanted: "julia-1.11".into(),
+            kernels: vec![
+                ("python3".into(), "python".into()),
+                ("julia-1.12".into(), "julia".into()),
+            ],
+        };
+        app.apply_kernel_event(not_found(), &mut r);
+        let shown = |app: &App| -> Vec<String> {
+            let pick = app.kernel_pick.as_ref().unwrap();
+            pick.shown().into_iter().cloned().collect()
+        };
+        assert_eq!(
+            shown(&app),
+            ["julia-1.12", "python3"],
+            "same language first"
+        );
+        app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &mut r);
+        assert!(
+            app.kernel_pick.is_none() && !app.kernel_starting,
+            "Esc: no kernel"
+        );
+        assert_eq!(app.kernel_name, "julia-1.11");
+
+        app.apply_kernel_event(not_found(), &mut r);
+        for c in "PY".chars() {
+            app.on_key(key(c), &mut r);
+        }
+        assert_eq!(shown(&app), ["python3"], "typing filters, ignoring case");
+        app.on_key(key('x'), &mut r);
+        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut r);
+        assert!(
+            app.kernel_pick.is_some(),
+            "Enter with no match changes nothing"
+        );
+        app.on_key(
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+            &mut r,
+        );
+        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut r);
+        assert_eq!(app.kernel_name, "python3");
+        assert!(app.kernel_pick.is_none());
+        assert!(app.notebook.extra["metadata"].get("kernelspec").is_none());
     }
 
     #[test]

@@ -9,16 +9,16 @@ If your problem isn't here, check the [log](#reading-the-log) and then [report a
 
 ## No kernel found
 
-The status line says `no kernelspec found (tried ["…", "python3"])`.
+The status line says `kernel '…' not found`, and either a popup offers the installed kernels or the message ends in `no other is installed`.
 
-jOtter found no kernel with the notebook's kernel name, nor a `python3` fallback. Usually `ipykernel` isn't installed in the environment you expect:
+jOtter found no kernel with the notebook's kernel name. It never substitutes another one on its own: choose one in the popup (type to filter, <kbd>Enter</kbd> starts it), or press <kbd>Esc</kbd> to go without (<kbd>R</kbd> asks again). If the kernel you expected isn't in the list, `ipykernel` usually isn't installed in the environment you think it is:
 
 ```sh
 .venv/bin/python -m pip install ipykernel     # a .venv next to the notebook
 python -m pip install ipykernel               # the activated environment
 ```
 
-If the notebook asks for a named kernel you don't have (look at `metadata.kernelspec.name`), either register one under that name, or choose one explicitly with `--kernel python3`. `jupyter kernelspec list` shows the kernels Jupyter can see. [Kernels](/jotter/getting-started/kernels/) explains the full search order.
+The name jOtter looks for is the notebook's `metadata.kernelspec.name`, or the `--kernel` option. `jupyter kernelspec list` shows the kernels Jupyter can see. [Kernels](/jotter/getting-started/kernels/) explains the full search order.
 
 ## The kernel starts, but imports fail
 

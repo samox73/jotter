@@ -2188,6 +2188,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, rendered: &mut Rendered) {
     if let Some(req) = &app.stdin_req {
         draw_stdin(frame, req);
     }
+    if let Some(pick) = &app.kernel_pick {
+        draw_kernels(frame, pick);
+    }
 }
 
 /// Width of the marks sidebar, borders included.
@@ -2384,6 +2387,50 @@ fn centered(outer: Rect, w: u16, h: u16) -> Rect {
         width: w,
         height: h,
     }
+}
+
+/// The notebook's kernel isn't installed: a filter field over the ones that
+/// are (`App::on_key_kernel_pick` takes the keys).
+fn draw_kernels(frame: &mut Frame, pick: &crate::app::KernelPick) {
+    const ROWS: usize = 10;
+    let shown = pick.shown();
+    // the window of ROWS matches that keeps the selection in view
+    let first = pick.selected.saturating_sub(ROWS - 1);
+    let mut lines = vec![Line::from(format!("› {}▏", pick.filter))];
+    lines.extend(
+        shown
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(ROWS)
+            .map(|(i, k)| {
+                let line = Line::from(format!("  {k}"));
+                if i == pick.selected {
+                    line.style(Style::new().add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                }
+            }),
+    );
+    if shown.is_empty() {
+        lines.push(Line::styled("  no match", Style::new().fg(Color::DarkGray)));
+    }
+    let title = format!("kernel '{}' not found — start which?", pick.wanted);
+    let width = lines
+        .iter()
+        .map(Line::width)
+        .max()
+        .unwrap_or(0)
+        .max(title.chars().count() + 2)
+        + 6;
+    let area = centered(frame.area(), width as u16, lines.len() as u16 + 2);
+    let inner = modal(
+        frame,
+        area,
+        &title,
+        "type to filter · ↑↓ · Enter starts · Esc none",
+    );
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Kernel `input()`: a centered modal prompt (all keys already route to it).

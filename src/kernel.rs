@@ -19,6 +19,13 @@ pub enum Event {
     Ready(Box<Kernel>),
     /// Background launch `launch` failed (reason for the status line).
     LaunchFailed { launch: u64, reason: String },
+    /// Launch `launch` found no kernelspec named `wanted`; `kernels` are the
+    /// installed ones as (name, language), for the user to pick from.
+    NotFound {
+        launch: u64,
+        wanted: String,
+        kernels: Vec<(String, String)>,
+    },
     /// nbformat-shaped output object for the cell that sent `parent`.
     Output { parent: String, output: Value },
     /// `execute_input` arrived: the kernel assigned an execution count.
@@ -60,7 +67,7 @@ pub enum Event {
 }
 
 pub struct Kernel {
-    /// Resolved kernelspec name (may differ from the requested one).
+    /// Kernelspec name.
     pub name: String,
     /// Directory the kernelspec was found in — disambiguates venv vs global.
     pub spec_dir: PathBuf,
@@ -91,62 +98,67 @@ fn project_venv_dirs(notebook_dir: &std::path::Path) -> impl Iterator<Item = Pat
     })
 }
 
-/// Kernelspec resolution ladder. For each candidate name (`requested`, then
-/// `python3`): project venv kernels at or above the notebook first, then global
+/// Every installed kernelspec, best first; a name resolves to its first
+/// entry. Activated env ($VIRTUAL_ENV: uv/poetry/pdm/venv; $CONDA_PREFIX:
+/// conda/mamba/pixi), then .venv/venv next to the notebook or in the nearest
+/// parent directory (project root above a notebooks/ subdir), then the global
 /// dirs (JUPYTER_PATH, standard paths, `jupyter --paths` when available).
-async fn resolve_kernelspec(
-    requested: &str,
-    notebook_dir: &std::path::Path,
-) -> Result<jupyter_zmq_client::KernelspecDir> {
-    // Activated env first ($VIRTUAL_ENV: uv/poetry/pdm/venv; $CONDA_PREFIX:
-    // conda/mamba/pixi), then .venv/venv next to the notebook or in the
-    // nearest parent directory (project root above a notebooks/ subdir).
-    let venv_dirs: Vec<PathBuf> = ["VIRTUAL_ENV", "CONDA_PREFIX"]
+async fn kernelspecs(notebook_dir: &std::path::Path) -> Vec<jupyter_zmq_client::KernelspecDir> {
+    let venv_dirs = ["VIRTUAL_ENV", "CONDA_PREFIX"]
         .iter()
         .filter_map(std::env::var_os)
         .map(|p| PathBuf::from(p).join("share/jupyter"))
         .chain(project_venv_dirs(notebook_dir))
-        .filter(|d| d.is_dir())
-        .collect();
-    let mut candidates = vec![requested.to_string()];
-    if requested != "python3" {
-        candidates.push("python3".into());
-    }
-    for name in &candidates {
-        for dir in &venv_dirs {
-            let specs = jupyter_zmq_client::read_kernelspec_jsons(dir).await;
-            if let Some(mut spec) = specs.into_iter().find(|s| &s.kernel_name == name) {
-                // ipykernel ships argv[0] = "python" (relative); jupyter clients
-                // substitute their own interpreter. Ours is the venv's python.
-                if let Some(arg0) = spec.kernelspec.argv.first_mut()
-                    && !arg0.contains('/')
-                    && arg0.starts_with("python")
-                    && let Some(venv) = dir.parent().and_then(|p| p.parent())
-                {
-                    *arg0 = venv.join("bin/python").to_string_lossy().into_owned();
-                }
-                return Ok(spec);
+        .filter(|d| d.is_dir());
+    let mut all = Vec::new();
+    for dir in venv_dirs {
+        for mut spec in jupyter_zmq_client::read_kernelspec_jsons(&dir).await {
+            // ipykernel ships argv[0] = "python" (relative); jupyter clients
+            // substitute their own interpreter. Ours is the venv's python.
+            if let Some(arg0) = spec.kernelspec.argv.first_mut()
+                && !arg0.contains('/')
+                && arg0.starts_with("python")
+                && let Some(venv) = dir.parent().and_then(|p| p.parent())
+            {
+                *arg0 = venv.join("bin/python").to_string_lossy().into_owned();
             }
-        }
-        if let Ok(spec) = jupyter_zmq_client::find_kernelspec_with_jupyter_paths(name).await {
-            return Ok(spec);
+            all.push(spec);
         }
     }
-    Err(anyhow!(
-        "no kernelspec found (tried {candidates:?}); pip install ipykernel in your venv, or pass --kernel"
-    ))
+    all.extend(jupyter_zmq_client::list_kernelspecs_with_jupyter_paths().await);
+    all
 }
 
 impl Kernel {
     /// Resolve + launch a kernel and wire all channels. Run in the background;
-    /// reports back as `Event::Ready` / `Event::Info` on `tx`.
+    /// reports back as `Event::Ready` / `NotFound` / `LaunchFailed` on `tx`.
     pub async fn launch(
         name: String,
         notebook_dir: PathBuf,
         tx: mpsc::UnboundedSender<Event>,
         launch: u64,
     ) {
-        match Self::launch_inner(&name, &notebook_dir, tx.clone()).await {
+        // Absolute notebook dir: venv-relative argv stays valid, and the kernel
+        // runs with cwd = notebook dir so relative paths in cells resolve like
+        // they do in jupyterlab.
+        let notebook_dir = notebook_dir.canonicalize().unwrap_or(notebook_dir);
+        let mut specs = kernelspecs(&notebook_dir).await;
+        let Some(at) = specs.iter().position(|s| s.kernel_name == name) else {
+            // no silent fallback to some other kernel: the user picks
+            let mut kernels: Vec<(String, String)> = Vec::new();
+            for s in specs {
+                if !kernels.iter().any(|(n, _)| *n == s.kernel_name) {
+                    kernels.push((s.kernel_name, s.kernelspec.language));
+                }
+            }
+            let _ = tx.send(Event::NotFound {
+                launch,
+                wanted: name,
+                kernels,
+            });
+            return;
+        };
+        match Self::launch_inner(specs.swap_remove(at), &name, &notebook_dir, tx.clone()).await {
             Ok(mut kernel) => {
                 kernel.launch = launch;
                 let _ = tx.send(Event::Ready(Box::new(kernel)));
@@ -159,17 +171,11 @@ impl Kernel {
     }
 
     async fn launch_inner(
+        spec: jupyter_zmq_client::KernelspecDir,
         name: &str,
         notebook_dir: &std::path::Path,
         tx: mpsc::UnboundedSender<Event>,
     ) -> Result<Kernel> {
-        // Absolute notebook dir: venv-relative argv stays valid, and the kernel
-        // runs with cwd = notebook dir so relative paths in cells resolve like
-        // they do in jupyterlab.
-        let notebook_dir = notebook_dir
-            .canonicalize()
-            .unwrap_or_else(|_| notebook_dir.to_path_buf());
-        let spec = resolve_kernelspec(name, &notebook_dir).await?;
         let resolved_name = spec.kernel_name.clone();
         let spec_dir = spec.path.clone();
         let display_name = spec.kernelspec.display_name.clone();
@@ -209,7 +215,7 @@ impl Kernel {
         let mut cmd = spec
             .command(&connection_file, Some(std::process::Stdio::piped()), None)
             .map_err(|e| anyhow!("kernel argv: {e}"))?;
-        cmd.current_dir(&notebook_dir);
+        cmd.current_dir(notebook_dir);
         // Orphan protection for exits that skip Drop (signals, panics, the
         // runtime tearing down the monitor task): ipykernel's parent poller
         // exits once its parent is gone — what jupyter_client sets too.
