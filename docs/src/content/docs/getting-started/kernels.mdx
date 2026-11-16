@@ -4,6 +4,7 @@ description: "How jOtter finds and starts a Jupyter kernel, and how to set one u
 ---
 
 import { Tabs, TabItem, Aside, Steps } from '@astrojs/starlight/components';
+import Still from '../../../components/Still.astro';
 
 jOtter doesn't run code itself. Like JupyterLab, it starts a **Jupyter kernel**, a separate process that executes cells and sends back their output. Any kernel that speaks the Jupyter protocol works: Python's `ipykernel`, IJulia, IRkernel, and others.
 
@@ -25,14 +26,7 @@ For that name, jOtter searches these places and uses the first match:
 
 If the name isn't found anywhere, jOtter doesn't guess. Like JupyterLab, it asks: a popup lists every installed kernel, those for the notebook's language first.
 
-```
-╭ kernel 'julia-1.11' not found — start which? ────╮
-│ › ▏                                              │
-│   julia-1.12                                     │
-│   python3                                        │
-│   ir                                             │
-╰─── type to filter · ↑↓ · Enter starts · Esc none ╯
-```
+<Still name="kernel-picker" alt="A popup titled “kernel 'julia-1.11' not found — start which?” with a filter field and the installed kernels julia-1.12, python3 and ir" />
 
 Type to narrow the list, move with <kbd>↑</kbd>/<kbd>↓</kbd>, and press <kbd>Enter</kbd> to start the selected kernel. It replaces the notebook's kernelspec with the next save, so you are asked only once. <kbd>Esc</kbd> leaves the notebook without a kernel; <kbd>R</kbd> asks again.
 
