@@ -2033,9 +2033,11 @@ impl App {
                         "kernel '{wanted}' not found, and no other is installed — pip install ipykernel in your venv"
                     ));
                 } else {
-                    // kernels for the notebook's language first
+                    // only kernels for the notebook's language, if there are any
                     let lang = crate::ui::notebook_language(&self.notebook);
-                    kernels.sort_by_key(|(_, l)| !l.eq_ignore_ascii_case(&lang));
+                    if kernels.iter().any(|(_, l)| l.eq_ignore_ascii_case(&lang)) {
+                        kernels.retain(|(_, l)| l.eq_ignore_ascii_case(&lang));
+                    }
                     self.message = Some(format!("kernel '{wanted}' not found"));
                     self.kernel_pick = Some(KernelPick {
                         wanted,
@@ -2242,6 +2244,7 @@ pub(super) mod tests {
             kernels: vec![
                 ("python3".into(), "python".into()),
                 ("julia-1.12".into(), "julia".into()),
+                ("julia-1.10".into(), "Julia".into()),
             ],
         };
         app.apply_kernel_event(not_found(), &mut r);
@@ -2251,8 +2254,8 @@ pub(super) mod tests {
         };
         assert_eq!(
             shown(&app),
-            ["julia-1.12", "python3"],
-            "same language first"
+            ["julia-1.12", "julia-1.10"],
+            "only the notebook's language"
         );
         app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &mut r);
         assert!(
@@ -2262,10 +2265,10 @@ pub(super) mod tests {
         assert_eq!(app.kernel_name, "julia-1.11");
 
         app.apply_kernel_event(not_found(), &mut r);
-        for c in "PY".chars() {
+        for c in "A-1.10".chars() {
             app.on_key(key(c), &mut r);
         }
-        assert_eq!(shown(&app), ["python3"], "typing filters, ignoring case");
+        assert_eq!(shown(&app), ["julia-1.10"], "typing filters, ignoring case");
         app.on_key(key('x'), &mut r);
         app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut r);
         assert!(
@@ -2277,8 +2280,23 @@ pub(super) mod tests {
             &mut r,
         );
         app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut r);
-        assert_eq!(app.kernel_name, "python3");
+        assert_eq!(app.kernel_name, "julia-1.10");
         assert!(app.kernel_pick.is_none());
+
+        // nothing for the notebook's language: everything is offered
+        app.launch = 2;
+        app.apply_kernel_event(
+            Event::NotFound {
+                launch: 2,
+                wanted: "x".into(),
+                kernels: vec![
+                    ("rust".into(), "rust".into()),
+                    ("ir".into(), "R".into()),
+                ],
+            },
+            &mut r,
+        );
+        assert_eq!(shown(&app), ["rust", "ir"]);
         assert!(app.notebook.extra["metadata"].get("kernelspec").is_none());
     }
 

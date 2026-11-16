@@ -1,8 +1,8 @@
 # Still: a notebook whose kernel isn't installed, and the popup asking which
-# one to start instead. The Julia and R kernelspecs are dummies (never
+# one to start instead. The Julia kernelspecs are dummies (never
 # started); XDG_DATA_HOME hides whatever the recording machine has installed.
 let specs = $env.JREC_WORK | path join jupyter
-for k in [[name, display, language]; [julia-1.12, "Julia 1.12", julia] [ir, R, R]] {
+for k in [[name, display, language]; [julia-1.12, "Julia 1.12", julia] [julia-1.10, "Julia 1.10", julia]] {
     let dir = $specs | path join kernels $k.name
     mkdir $dir
     {argv: ["true"], display_name: $k.display, language: $k.language} | to json | save ($dir | path join kernel.json)
