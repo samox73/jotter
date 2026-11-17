@@ -105,6 +105,8 @@ step restart {
 step save {
     key w
     pause 1500ms
+    let info = open --raw ($env.JREC_WORK | path join t.ipynb) | from json | get metadata.language_info?
+    if ($info.name? | default "" | str lowercase) != "rust" { error make {msg: $"saved language_info: ($info | to json -r)"} }
 }
 key q
 pause 1sec

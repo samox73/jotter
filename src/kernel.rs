@@ -8,7 +8,7 @@ use jupyter_protocol::{
     ConnectionInfo, Transport,
     messaging::{
         CompleteRequest, ExecuteRequest, ExecutionState, InputReply, InspectRequest,
-        InterruptRequest, JupyterMessage, JupyterMessageContent, ReplyStatus,
+        InterruptRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest, ReplyStatus,
     },
 };
 use serde::Serialize;
@@ -53,6 +53,8 @@ pub enum Event {
     Done { parent: String },
     /// The kernel process exited on its own (reason includes last stderr line).
     Dead(String),
+    /// `language_info` of the kernel's kernel_info_reply, as notebooks store it.
+    LanguageInfo(Value),
     /// Human-readable status (launch errors, ...).
     Info(String),
 }
@@ -77,6 +79,9 @@ pub struct Kernel {
     /// kernelspec interrupt_mode == "message"; otherwise SIGINT the process.
     interrupt_via_message: bool,
     connection_file: PathBuf,
+    /// The iopub and shell-reply pumps: they would outlive the kernel, their
+    /// sockets reconnecting to its ports forever (stopped on Drop).
+    pumps: [tokio::task::AbortHandle; 2],
 }
 
 /// `share/jupyter` of every `.venv`/`venv` from the notebook's directory
@@ -219,6 +224,7 @@ impl Kernel {
                 let mut lines = tokio::io::BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     if !line.trim().is_empty() {
+                        log::debug!("kernel stderr: {line}");
                         *last.lock().unwrap() = line;
                     }
                 }
@@ -271,7 +277,7 @@ impl Kernel {
 
         // iopub pump: kernel outputs/status -> UI events
         let iopub_tx = tx.clone();
-        tokio::spawn(async move {
+        let iopub_pump = tokio::spawn(async move {
             loop {
                 match iopub.read().await {
                     Ok(msg) => {
@@ -306,9 +312,11 @@ impl Kernel {
         let abort_tx = tx.clone();
         tokio::spawn(async move {
             let mut kept = std::collections::VecDeque::new();
-            // request types this kernel has left unanswered (evcxr: inspect):
-            // not sent again, or each would hold up the runs behind it
-            let mut unanswered: Vec<String> = Vec::new();
+            // request types this kernel has left unanswered (evcxr: inspect),
+            // with the request given up on: not sent again, or each would
+            // hold up the runs behind it. A reply that comes after all (Julia
+            // compiles its first inspect for longer than the wait) lifts that.
+            let mut unanswered: Vec<(String, String)> = Vec::new();
             loop {
                 let msg = match kept.pop_front() {
                     Some(msg) => msg,
@@ -320,8 +328,17 @@ impl Kernel {
                 let id = msg.header.msg_id.clone();
                 let kind = msg.header.msg_type.clone();
                 let stops = stops_on_error(&msg);
-                let is_run = matches!(msg.content, JupyterMessageContent::ExecuteRequest(_));
-                if unanswered.contains(&kind) {
+                // a run takes as long as it takes, and every kernel answers
+                // kernel_info, if only once it is up
+                let patient = matches!(
+                    msg.content,
+                    JupyterMessageContent::ExecuteRequest(_)
+                        | JupyterMessageContent::KernelInfoRequest(_)
+                );
+                while let Ok((late, _)) = replied_rx.try_recv() {
+                    unanswered.retain(|(_, given_up)| Some(given_up) != late.as_ref());
+                }
+                if unanswered.iter().any(|(k, _)| *k == kind) {
                     let _ = abort_tx.send(no_reply(&kind, id));
                     continue;
                 }
@@ -336,22 +353,26 @@ impl Kernel {
                                 let _ = abort_tx.send(no_reply(&kind, id.clone()));
                                 break Some(true);
                             }
-                            Some(_) => {} // a late reply to a request given up on
+                            // a late reply to a request given up on
+                            Some((late, _)) => {
+                                unanswered.retain(|(_, given_up)| Some(given_up) != late.as_ref())
+                            }
                             None => break None,
                         }
                     }
                 };
-                // a run takes as long as it takes; anything else is answered
-                // promptly or (by some kernels) never
-                let reply = if is_run {
+                // anything else is answered promptly or (by some kernels) never
+                let reply = if patient {
                     reply.await
                 } else {
                     match tokio::time::timeout(REPLY_WAIT, reply).await {
                         Ok(reply) => reply,
                         Err(_) => {
-                            log::warn!("no reply to {kind} in {REPLY_WAIT:?}: not asking again");
-                            let _ = abort_tx.send(no_reply(&kind, id));
-                            unanswered.push(kind);
+                            log::warn!(
+                                "no reply to {kind} in {REPLY_WAIT:?}: not asking again until it comes"
+                            );
+                            let _ = abort_tx.send(no_reply(&kind, id.clone()));
+                            unanswered.push((kind, id));
                             Some(false)
                         }
                     }
@@ -376,7 +397,7 @@ impl Kernel {
             }
         });
         let reply_tx = tx.clone();
-        tokio::spawn(async move {
+        let reply_pump = tokio::spawn(async move {
             use jupyter_zmq_client::RuntimeError;
             loop {
                 let msg = match shell_recv.read().await {
@@ -415,8 +436,14 @@ impl Kernel {
                             .found
                             .then(|| serde_json::to_value(&x.data).ok())
                             .flatten()
-                            .and_then(|d| d.get("text/plain")?.as_str().map(String::from)),
+                            .and_then(|d| d.get("text/plain")?.as_str().map(plain)),
                     },
+                    JupyterMessageContent::KernelInfoReply(x) => {
+                        match serde_json::to_value(&x.language_info) {
+                            Ok(info) => Event::LanguageInfo(info),
+                            Err(_) => continue,
+                        }
+                    }
                     _ => continue,
                 };
                 if reply_tx.send(event).is_err() {
@@ -469,6 +496,10 @@ impl Kernel {
             }
         });
 
+        // what language this is, for the notebook's metadata
+        let _ =
+            shell_tx.send(JupyterMessage::new(KernelInfoRequest {}, None).with_session(&session));
+
         Ok(Kernel {
             name: resolved_name,
             spec_dir,
@@ -483,6 +514,7 @@ impl Kernel {
             kill_tx: Some(kill_tx),
             interrupt_via_message,
             connection_file,
+            pumps: [iopub_pump.abort_handle(), reply_pump.abort_handle()],
         })
     }
 
@@ -562,7 +594,24 @@ impl Drop for Kernel {
             let _ = kill.send(()); // monitor task kills + reaps the child
         }
         let _ = std::fs::remove_file(&self.connection_file);
+        for pump in &self.pumps {
+            pump.abort();
+        }
     }
+}
+
+/// Docs text without overstrike: R's help underlines and emboldens the way
+/// man pages do, as `_\x08H` and `H\x08H`.
+fn plain(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c == '\x08' {
+            out.pop();
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// `_jupyter_types_experimental` of a complete_reply: text -> (type, signature).
@@ -654,6 +703,11 @@ mod tests {
         assert_eq!(dirs, want.map(PathBuf::from));
     }
 
+    #[test]
+    fn docs_lose_their_overstrike() {
+        assert_eq!(plain("_\x08P_\x08r_\x08i_\x08n_\x08t V\x08Va\x08al\x08l: ok"), "Print Val: ok");
+    }
+
     /// End-to-end against a real python kernel. Ignored by default because it
     /// needs ipykernel installed; run with `cargo test -- --ignored`.
     #[tokio::test]
@@ -680,17 +734,22 @@ mod tests {
         };
         let msg_id = kernel.execute("print(21 * 2)".into());
         let mut out = String::new();
+        let mut language = None;
         loop {
             match next(&mut rx, deadline).await {
                 Event::Output { parent, output } if parent == msg_id => {
                     out.push_str(&crate::notebook::join_multiline(&output["text"]));
                 }
+                Event::LanguageInfo(info) => language = Some(info),
                 Event::Done { parent } if parent == msg_id => break,
                 Event::Dead(reason) => panic!("kernel died: {reason}"),
                 _ => {}
             }
         }
         assert!(out.contains("42"), "expected 42 in stdout, got: {out:?}");
+        let language = language.expect("no language_info before the first run finished");
+        assert_eq!(language["name"], "python");
+        assert_eq!(language["codemirror_mode"]["name"], "ipython", "as the kernel sent it");
     }
 
     /// complete/inspect replies route back (ignored: needs ipykernel).

@@ -2005,6 +2005,21 @@ impl App {
                 self.on_complete_reply(parent, matches, start, types)
             }
             Event::Inspect { parent, text } => self.on_inspect_reply(parent, text),
+            Event::LanguageInfo(info) => {
+                // as jupyter writes it; saved with the next w
+                if let Some(name) = info["name"].as_str() {
+                    rendered.set_language(name);
+                }
+                if let Some(meta) = self
+                    .notebook
+                    .extra
+                    .entry("metadata")
+                    .or_insert_with(|| Value::Object(Map::new()))
+                    .as_object_mut()
+                {
+                    meta.insert("language_info".into(), info);
+                }
+            }
             Event::Output { parent, output } => {
                 if let Some(idx) = self.target_cell(&parent) {
                     let cell = &mut self.notebook.cells[idx];
@@ -2183,6 +2198,15 @@ pub(super) mod tests {
         app.on_key(key('x'), &mut r);
         assert!(app.confirm.is_none());
         assert_eq!(app.message.as_deref(), Some("restart cancelled"));
+    }
+
+    #[test]
+    fn the_kernels_language_info_goes_into_the_notebook() {
+        let (mut app, mut r) = one_cell_app("langinfo");
+        let info = serde_json::json!({"name": "R", "version": "4.5.1", "file_extension": ".r"});
+        app.apply_kernel_event(Event::LanguageInfo(info.clone()), &mut r);
+        assert_eq!(app.notebook.extra["metadata"]["language_info"], info);
+        assert_eq!(crate::ui::notebook_language(&app.notebook), "r");
     }
 
     #[test]

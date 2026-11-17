@@ -67,7 +67,11 @@ step complete {
 step inspect {
     cell "uppercasefirst"
     key shift+tab
-    pause 4sec
+    pause 6sec
+    # Julia can compile its first inspect for longer than jotter waits for a
+    # reply; once that reply is in, asking again works
+    if not (screen | str contains "uppercasefirst(") { key shift+tab; pause 4sec }
+    if not (screen | str contains "uppercasefirst(") { error make {msg: "no docs on screen"} }
 }
 step editor {
     key ctrl+g
@@ -111,6 +115,8 @@ step restart {
 step save {
     key w
     pause 1500ms
+    let info = open --raw ($env.JREC_WORK | path join t.ipynb) | from json | get metadata.language_info?
+    if ($info.name? | default "" | str lowercase) != "julia" { error make {msg: $"saved language_info: ($info | to json -r)"} }
 }
 key q
 pause 1sec

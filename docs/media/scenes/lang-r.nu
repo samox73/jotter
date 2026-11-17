@@ -67,6 +67,8 @@ step inspect {
     cell "print"
     key shift+tab
     pause 4sec
+    # R's help comes man-page style, underlined by overstrike (_^HP_^Hr...)
+    if not (screen | str contains "Print Values") { error make {msg: "help title missing or still overstruck"} }
 }
 step editor {
     key ctrl+g
@@ -110,6 +112,8 @@ step restart {
 step save {
     key w
     pause 1500ms
+    let info = open --raw ($env.JREC_WORK | path join t.ipynb) | from json | get metadata.language_info?
+    if ($info.name? | default "" | str lowercase) != "r" { error make {msg: $"saved language_info: ($info | to json -r)"} }
 }
 key q
 pause 1sec
