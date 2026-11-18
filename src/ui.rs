@@ -2478,22 +2478,108 @@ fn draw_completion(
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// Shift+Tab docs: scrollable (ANSI-colored) text; `top` clamped here.
+/// IPython's inspect text regrouped for reading: the signature first, then
+/// the docstring(s), then the remaining fields (`Type`, `File`, ...) dimmed;
+/// fields without a value are dropped. A field starts at a colored
+/// `Label:` (which is what tells it from a docstring line like `Note:`), so
+/// text from other kernels passes through unchanged.
+fn docs_layout(text: Text<'static>) -> Text<'static> {
+    let mut head: Vec<Line> = Vec::new();
+    let mut fields: Vec<(Span, Vec<Line>)> = Vec::new();
+    for mut line in text.lines {
+        let is_label = line.spans.first().is_some_and(|s| {
+            s.style.fg.is_some_and(|c| c != Color::Reset)
+                && s.content.starts_with(|c: char| c.is_ascii_uppercase())
+                && s.content.trim_end().ends_with(':')
+        });
+        if is_label {
+            let label = line.spans.remove(0);
+            // the value may start on the label's line, after padding
+            while let Some(first) = line.spans.first_mut() {
+                let rest = first.content.trim_start();
+                if !rest.is_empty() {
+                    first.content = rest.to_string().into();
+                    break;
+                }
+                line.spans.remove(0);
+            }
+            fields.push((label, if line.spans.is_empty() { Vec::new() } else { vec![line] }));
+        } else {
+            match fields.last_mut() {
+                Some((_, body)) => body.push(line),
+                None => head.push(line),
+            }
+        }
+    }
+    let dim = Style::new().fg(Color::DarkGray);
+    let (mut signature, mut docs, mut meta) = (Vec::new(), Vec::new(), Vec::new());
+    for (label, mut body) in fields {
+        while body.last().is_some_and(|l| l.to_string().trim().is_empty()) {
+            body.pop();
+        }
+        if body.is_empty() {
+            continue;
+        }
+        let name = label.content.trim_end().to_string();
+        if name.ends_with("ignature:") && signature.is_empty() {
+            signature = body;
+        } else if name.ends_with("ocstring:") || name == "Source:" {
+            if name != "Docstring:" {
+                body.insert(0, Line::from(label));
+            }
+            docs.push(body);
+        } else {
+            meta.push((name, body));
+        }
+    }
+    let pad = meta.iter().map(|(name, _)| name.chars().count()).max().unwrap_or(0);
+    let meta: Vec<Line> = meta
+        .into_iter()
+        .flat_map(|(name, mut body)| {
+            body[0].spans.insert(0, Span::raw(format!("{name:<pad$} ")));
+            body
+        })
+        .map(|mut line| {
+            line.spans.iter_mut().for_each(|s| s.style = dim);
+            line
+        })
+        .collect();
+    let mut lines: Vec<Line> = Vec::new();
+    for block in [head, signature].into_iter().chain(docs).chain([meta]) {
+        if !block.is_empty() {
+            if !lines.is_empty() {
+                lines.push(Line::default());
+            }
+            lines.extend(block);
+        }
+    }
+    Text::from(lines)
+}
+
+/// Shift+Tab docs: scrollable text (see `docs_layout`), wrapped, in a panel
+/// only as large as its content (at most the screen); `top` clamped here.
 fn draw_pager(frame: &mut Frame, pager: &mut crate::app::Pager) {
+    const SCROLL_HINT: &str = "j/k PgUp/PgDn g/G scroll · any other key closes";
     let area = frame.area();
-    let panel =
-        centered(area, area.width.saturating_sub(4).clamp(40, 110), area.height.saturating_sub(2));
+    // the widest panel, less borders + padding
+    let max = (area.width.saturating_sub(4).min(110) as usize).saturating_sub(4);
     let text = pager.text.into_text().unwrap_or_else(|_| Text::raw(pager.text.clone()));
-    let rows = panel.height.saturating_sub(2) as usize;
-    let total = text.lines.len();
-    pager.top = pager.top.min(total.saturating_sub(rows));
-    let title = if total > rows {
-        format!("{} · {}–{} of {total}", pager.title, pager.top + 1, (pager.top + rows).min(total))
+    let lines = wrap_lines(&docs_layout(text).lines, max as u16).rows;
+    let total = lines.len();
+    let rows = total.min(area.height.saturating_sub(4) as usize);
+    pager.top = pager.top.min(total - rows);
+    let (title, hint) = if total > rows {
+        let (from, to) = (pager.top + 1, pager.top + rows);
+        (format!("{} · {from}–{to} of {total}", pager.title), SCROLL_HINT)
     } else {
-        pager.title.clone()
+        (pager.title.clone(), "any key closes")
     };
-    let inner = modal(frame, panel, &title, "j/k PgUp/PgDn g/G scroll · any other key closes");
-    let lines: Vec<Line> = text.lines.into_iter().skip(pager.top).take(rows).collect();
+    // the frame's own labels must fit too
+    let content = lines.iter().map(Line::width).max().unwrap_or(0);
+    let labels = title.chars().count().max(hint.chars().count());
+    let panel = centered(area, (content.max(labels).min(max) + 4) as u16, rows as u16 + 2);
+    let inner = modal(frame, panel, &title, hint);
+    let lines: Vec<Line> = lines.into_iter().skip(pager.top).take(rows).collect();
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -3149,6 +3235,60 @@ mod tests {
         assert_eq!(words, 30, "every word visible across wrapped rows");
         // clicks on a continuation row map back to the one source line
         assert!(matches!(app.hit[2].kind, crate::app::HitKind::Source { line: 0, .. }));
+    }
+
+    #[test]
+    fn docs_pager_is_only_as_large_as_its_content() {
+        let draw = |text: &str, top: usize| {
+            let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 12)).unwrap();
+            let mut pager = crate::app::Pager { title: "docs".into(), text: text.into(), top };
+            t.draw(|f| draw_pager(f, &mut pager)).unwrap();
+            (buffer_rows(&t), pager.top)
+        };
+        let (rows, _) = draw("Type: int\nDocstring: x", 0);
+        let boxed: Vec<&String> = rows.iter().filter(|r| r.contains(['│', '╭', '╰'])).collect();
+        assert_eq!(boxed.len(), 4, "two lines + borders:\n{}", rows.join("\n"));
+        assert!(boxed[0].trim().chars().count() < 30, "narrow: {}", boxed[0]);
+        assert!(boxed[3].contains("any key closes") && !boxed[3].contains("scroll"));
+        // more lines than fit: full height, scroll hint, `top` clamped
+        let long = (0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let (rows, top) = draw(&long, usize::MAX);
+        assert_eq!(top, 30 - 8);
+        assert!(rows[1].contains("23–30 of 30") && rows[9].contains("line 29"));
+        assert!(rows[10].contains("scroll"), "{}", rows.join("\n"));
+        // a line wider than the screen wraps instead of losing its end
+        let (rows, _) = draw(&format!("/nix/store/{}/numpy/__init__.py", "x".repeat(90)), 0);
+        assert!(rows.join("\n").contains("__init__.py"), "{}", rows.join("\n"));
+    }
+
+    #[test]
+    fn docs_are_regrouped_and_long_lines_wrap() {
+        use ansi_to_tui::IntoText;
+        let plain = |t: Text| t.lines.iter().map(Line::to_string).collect::<Vec<_>>();
+        // real IPython output for a class
+        let class = "\x1b[31mInit signature:\x1b[39m A(x, y=\x1b[32m2\x1b[39m)\n\x1b[31mDocstring:\x1b[39m      Class doc.\n\nType: not a field\n\x1b[31mInit docstring:\x1b[39m init doc\n\x1b[31mFile:\x1b[39m           ~/a.py\n\x1b[31mType:\x1b[39m           type\n\x1b[31mSubclasses:\x1b[39m     ";
+        let out = docs_layout(class.into_text().unwrap());
+        assert_eq!(
+            plain(out.clone()),
+            [
+                "A(x, y=2)",
+                "",
+                "Class doc.",
+                "",
+                "Type: not a field",
+                "",
+                "Init docstring:",
+                "init doc",
+                "",
+                "File: ~/a.py",
+                "Type: type",
+            ]
+        );
+        assert_eq!(out.lines[0].spans[1].style.fg, Some(Color::Green), "colors survive");
+        assert_eq!(out.lines[10].spans[0].style.fg, Some(Color::DarkGray));
+        // no colored labels (another kernel): untouched
+        let other = "Type: int\n  Docstring: x";
+        assert_eq!(plain(docs_layout(other.into_text().unwrap())), ["Type: int", "  Docstring: x"]);
     }
 
     #[test]
