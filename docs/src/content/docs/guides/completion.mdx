@@ -6,7 +6,7 @@ description: "Tab completion from the kernel and Shift+Tab documentation, in bot
 import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import Clip from '../../../components/Clip.astro';
 
-<Clip name="completion" caption="Completion after a dot, then the docs for the highlighted entry" />
+<Clip name="completion" caption="Completion after a dot, then the docs for the accepted name" />
 
 jOtter asks the kernel for completions and documentation, like JupyterLab. Both work with the builtin editor and with the [Neovim backend](/jotter/guides/neovim/).
 
@@ -19,7 +19,7 @@ The popup lists each candidate with its kind (function, module, …) and signatu
 | Key | Does |
 | --- | --- |
 | <kbd>Tab</kbd>, <kbd>↓</kbd>, <kbd>Ctrl</kbd>+<kbd>n</kbd> | Next entry |
-| <kbd>↑</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd> | Previous entry |
+| <kbd>Shift</kbd>+<kbd>Tab</kbd>, <kbd>↑</kbd>, <kbd>Ctrl</kbd>+<kbd>p</kbd> | Previous entry |
 | <kbd>Enter</kbd> | Accept |
 | <kbd>Esc</kbd> | Close the popup |
 
@@ -39,7 +39,7 @@ Like the docs below, signatures come from the running kernel: a function from a 
 
 ## Documentation
 
-<kbd>Shift</kbd>+<kbd>Tab</kbd> shows the documentation for the name under the cursor, or for the highlighted entry when the completion popup is open. Documentation comes from the running kernel, so the cell that defines or imports the name must have run. Any key closes the docs.
+<kbd>Shift</kbd>+<kbd>Tab</kbd> shows the documentation for the name under the cursor. While the completion popup is open, it selects the previous entry instead. Documentation comes from the running kernel, so the cell that defines or imports the name must have run. Any key closes the docs.
 
 ## Before cells have run
 

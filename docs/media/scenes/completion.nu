@@ -1,5 +1,5 @@
 # Completion: the popup opens after a dot, filters as you type; Shift+Tab
-# shows the docs for the highlighted entry.
+# shows the docs for the accepted name.
 send "jotter completion.ipynb"
 key enter
 wait-for "○ idle"
@@ -15,11 +15,11 @@ send "lin" --delay 150ms
 pause 1000ms
 key down
 pause 800ms
-key shift+tab # docs for the highlighted entry
+key enter # accept
+pause 500ms
+key shift+tab # docs for the name under the cursor
 pause 3sec
 key escape
-pause 500ms
-key enter # accept
 pause 500ms
 send "(0, 1, 5)" --delay 60ms
 pause 1500ms

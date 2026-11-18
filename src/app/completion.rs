@@ -241,10 +241,11 @@ pub(super) fn in_string_or_comment(line: &str) -> bool {
 
 impl App {
     /// Completion/inspection keys inside the editor; true = consumed.
-    /// With the popup open: Tab/↑↓/Ctrl+n/p pick, Enter accepts, Esc closes;
+    /// With the popup open: Tab/Shift+Tab/↑↓/Ctrl+n/p pick, Enter accepts, Esc closes;
     /// name chars and Backspace go to the editor and the popup filters on
     /// (see `after_edit_key`); anything else closes it and is handled
-    /// normally. Tab after a name char asks the kernel; Shift+Tab: docs.
+    /// normally. Popup closed: Tab after a name char asks the kernel;
+    /// Shift+Tab: docs.
     pub(super) fn on_key_completion(&mut self, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if let Some(c) = &mut self.completion {
@@ -252,17 +253,8 @@ impl App {
             match key.code {
                 KeyCode::Tab | KeyCode::Down if n > 0 => c.sel = (c.sel + 1) % n,
                 KeyCode::Char('n') if ctrl && n > 0 => c.sel = (c.sel + 1) % n,
-                KeyCode::Up if n > 0 => c.sel = (c.sel + n - 1) % n,
+                KeyCode::Up | KeyCode::BackTab if n > 0 => c.sel = (c.sel + n - 1) % n,
                 KeyCode::Char('p') if ctrl && n > 0 => c.sel = (c.sel + n - 1) % n,
-                // Shift+Tab is always docs: here, for the highlighted candidate
-                KeyCode::BackTab if n > 0 => {
-                    if let Some((code, pos)) =
-                        self.accepted_code(self.completion.as_ref().unwrap().sel)
-                    {
-                        self.request_docs(code, pos);
-                    }
-                    return true;
-                }
                 KeyCode::Enter if key.modifiers.is_empty() && n > 0 => {
                     let c = self.completion.take().unwrap();
                     self.accept_completion(c.start, c.end, &c.items[c.sel].text);
@@ -742,7 +734,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_tab_in_the_popup_asks_for_docs_and_details_fill_in_lazily() {
+    fn shift_tab_in_the_popup_cycles_backwards_and_details_fill_in_lazily() {
         let (mut app, mut r) = one_cell_app("docs");
         app.notebook.cells[0].source = "np.".into();
         app.open_editor(false);
@@ -775,11 +767,15 @@ mod tests {
             &mut r,
         );
         assert_eq!(labels(&app), ["linalg", "linspace"], "shown without the dot");
-        app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &mut r);
-        // Shift+Tab: docs (here: no kernel), selection untouched, popup stays
-        app.on_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT), &mut r);
-        assert_eq!(app.message.as_deref(), Some("no kernel — docs need one"));
+        // Shift+Tab: previous candidate, wrapping; never docs while the popup is open
+        let back_tab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+        app.on_key(back_tab, &mut r);
+        assert_eq!(app.completion.as_ref().unwrap().sel, 1, "wraps from the first to the last");
+        app.on_key(back_tab, &mut r);
+        assert_eq!(app.completion.as_ref().unwrap().sel, 0);
+        app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &mut r);
         assert_eq!(app.completion.as_ref().unwrap().sel, 1);
+        assert_eq!(app.message, None, "no docs request");
         // a detail reply fills kind + signature of that candidate
         app.completion.as_mut().unwrap().detail_reqs.insert("i1".into(), ".linspace".into());
         let doc = "Signature: np.linspace(start, stop)\nType:      function";
@@ -794,7 +790,7 @@ mod tests {
     #[test]
     fn candidate_code_splices_into_the_live_text_and_visible_rows_follow_the_window() {
         let (mut app, _r) = one_cell_app("splice");
-        // request made at "np." — then the user typed "lin" before Shift+Tab
+        // request made at "np." — then the user typed "lin"
         app.notebook.cells[0].source = "np.lin\nplt.subplots(figsize=(10, 10))".into();
         app.open_editor(false);
         app.editor.as_mut().unwrap().click(0, 6, true);
