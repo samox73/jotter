@@ -2007,9 +2007,7 @@ impl App {
             Event::Inspect { parent, text } => self.on_inspect_reply(parent, text),
             Event::LanguageInfo(info) => {
                 // as jupyter writes it; saved with the next w
-                if let Some(name) = info["name"].as_str() {
-                    rendered.set_language(name);
-                }
+                rendered.set_language_info(&info);
                 if let Some(meta) = self
                     .notebook
                     .extra
