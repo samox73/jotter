@@ -2633,7 +2633,7 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
             ("Shift+Tab", "docs for the name under the cursor"),
             ("Tab Shift+Tab", "completion: next / prev (also ↓ ↑)"),
             ("Enter", "completion: accept"),
-            ("Ctrl+\\", "split the cell at the cursor"),
+            ("Ctrl+k", "split the cell at the cursor"),
             ("h j k l w b e", "builtin: move (also 0 $ ^ gg G)"),
             ("i a I A o O", "builtin: insert"),
             ("x D dd yy p P", "builtin: delete / yank / put"),

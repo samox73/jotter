@@ -1262,11 +1262,16 @@ impl App {
         if self.on_key_completion(key) {
             return;
         }
-        // Ctrl+\ splits the cell at the cursor (plain terminals report it as Ctrl+4)
+        // Ctrl+k splits the cell at the cursor.
+        // DEPRECATED since 0.7.0, remove in 0.8.0: Ctrl+\, the old key, and Ctrl+4,
+        // which is how terminals without the kitty keyboard protocol report it.
         if key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(key.code, KeyCode::Char('\\') | KeyCode::Char('4'))
+            && matches!(key.code, KeyCode::Char('k' | '\\' | '4'))
         {
             self.split_cell(rendered);
+            if key.code != KeyCode::Char('k') {
+                self.message = Some("Ctrl+\\ goes away in 0.8.0 — Ctrl+k splits the cell".into());
+            }
             return;
         }
         let editor = self.editor.as_mut().unwrap();
@@ -2595,6 +2600,28 @@ pub(super) mod tests {
         type_cmd(&mut app, &mut r, "q");
         assert!(app.should_quit, ":q in notebook mode quits");
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn ctrl_k_splits_and_the_old_keys_say_they_are_deprecated() {
+        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        for (c, deprecated) in [('k', false), ('\\', true), ('4', true)] {
+            let (mut app, mut r) = one_cell_app("split");
+            app.on_key(key('i'), &mut r);
+            app.on_key(key('x'), &mut r);
+            app.on_key(ctrl(c), &mut r);
+            assert_eq!(app.notebook.cells.len(), 2, "Ctrl+{c} splits");
+            let said = app.message.as_deref().is_some_and(|m| m.contains("goes away"));
+            assert_eq!(said, deprecated, "Ctrl+{c}");
+        }
+    }
+
+    #[test]
+    fn the_deprecated_split_keys_are_gone_by_0_8_0() {
+        // fails on the 0.8.0 version bump: remove Ctrl+\\ and Ctrl+4 from
+        // `on_key_edit`, their docs note, and this test
+        let minor: u32 = env!("CARGO_PKG_VERSION_MINOR").parse().unwrap();
+        assert!(env!("CARGO_PKG_VERSION_MAJOR") == "0" && minor < 8);
     }
 
     #[test]

@@ -180,6 +180,8 @@ impl Editor {
                 self.lines[row].insert_str(b, "    ");
                 self.cursor.1 += 4;
             }
+            // a Ctrl chord nobody bound is not text
+            KeyCode::Char(_) if key.modifiers.contains(KeyModifiers::CONTROL) => {}
             KeyCode::Char(c) => {
                 let b = bidx(&self.lines[row], col);
                 self.lines[row].insert(b, c);
@@ -403,6 +405,15 @@ mod tests {
     }
     fn code(c: KeyCode) -> KeyEvent {
         KeyEvent::new(c, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn ctrl_chords_insert_nothing() {
+        let mut e = Editor::new("ab");
+        e.input(key('i'));
+        let chord = KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT;
+        e.input(KeyEvent::new(KeyCode::Char('7'), chord));
+        assert_eq!(e.source(), "ab");
     }
 
     #[test]
