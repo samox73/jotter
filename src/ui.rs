@@ -407,6 +407,9 @@ pub struct Rendered {
     /// Code-cell language (syntect token: "python", "r", ...), from the
     /// notebook's language_info / kernelspec metadata.
     lang: String,
+    /// The kernel's pygments_lexer and codemirror_mode: tried when no syntax
+    /// knows `lang` (a kernel for a language without a grammar names a close one).
+    lang_hints: Vec<String>,
     /// Body width blocks are wrapped to (0 until the first draw).
     width: u16,
     pub blocks: Vec<CellBlock>,
@@ -435,10 +438,49 @@ pub fn is_latex_raw(cell: &Cell) -> bool {
             .is_some_and(|f| f.contains("latex"))
 }
 
+/// Highlighting hints in a language_info besides its name: pygments_lexer,
+/// then codemirror_mode (a string or {"name": ...}).
+fn lexer_hints(info: Option<&Value>) -> Vec<String> {
+    let Some(info) = info else { return Vec::new() };
+    let mut hints = Vec::new();
+    if let Some(p) = info.get("pygments_lexer").and_then(Value::as_str) {
+        hints.push(p.to_lowercase());
+    }
+    let mode = info.get("codemirror_mode");
+    if let Some(m) = mode.and_then(|m| m.as_str().or_else(|| m.get("name")?.as_str())) {
+        hints.push(m.to_lowercase());
+    }
+    hints
+}
+
+/// `$XDG_CONFIG_HOME/jotter/syntaxes` (default `~/.config/jotter/syntaxes`):
+/// extra `.sublime-syntax` grammars, as bat reads them.
+fn user_syntax_dir() -> Option<std::path::PathBuf> {
+    crate::config::path().and_then(|p| Some(p.parent()?.join("syntaxes")))
+}
+
+/// syntect's own set plus bat's (Julia, TOML, TypeScript, ...), plus any
+/// grammars in the user's syntaxes folder.
+fn syntax_set() -> SyntaxSet {
+    syntax_set_with(user_syntax_dir())
+}
+
+fn syntax_set_with(dir: Option<std::path::PathBuf>) -> SyntaxSet {
+    let bundled = two_face::syntax::extra_newlines();
+    let Some(dir) = dir.filter(|d| d.is_dir()) else { return bundled };
+    let mut builder = bundled.into_builder();
+    match builder.add_from_folder(&dir, true) {
+        Ok(()) => builder.build(),
+        Err(e) => {
+            log::warn!("ignoring the grammars in {}: {e}", dir.display());
+            two_face::syntax::extra_newlines()
+        }
+    }
+}
+
 impl Rendered {
     pub fn build(nb: &Notebook, picker: Option<Picker>, dir: std::path::PathBuf) -> Self {
-        // syntect's own set plus bat's: Julia, TOML, TypeScript, ...
-        let ps = two_face::syntax::extra_newlines();
+        let ps = syntax_set();
         let mut themes = ThemeSet::load_defaults().themes;
         let theme = themes
             .remove(&crate::config::get().theme)
@@ -450,6 +492,7 @@ impl Rendered {
             picker,
             dir,
             lang: notebook_language(nb),
+            lang_hints: lexer_hints(nb.extra.get("metadata").and_then(|m| m.get("language_info"))),
             width: 0,
             blocks: Vec::new(),
             frame: 0,
@@ -530,10 +573,30 @@ impl Rendered {
         self.lang = lang.to_lowercase();
     }
 
+    /// The kernel's language_info arrived: its name, and its lexer hints.
+    pub fn set_language_info(&mut self, info: &Value) {
+        if let Some(name) = info["name"].as_str() {
+            self.set_language(name);
+        }
+        self.lang_hints = lexer_hints(Some(info));
+    }
+
+    /// Syntax token for code cells: the language if a grammar knows it, else
+    /// the first lexer hint one knows.
+    fn code_lang(&self) -> &str {
+        if self.ps.find_syntax_by_token(&self.lang).is_some() {
+            return &self.lang;
+        }
+        self.lang_hints
+            .iter()
+            .find(|h| self.ps.find_syntax_by_token(h).is_some())
+            .map_or(&self.lang, |h| h)
+    }
+
     /// Highlighting token for a cell's source.
     fn cell_lang(&self, cell: &Cell) -> &str {
         match cell.cell_type.as_str() {
-            "code" => &self.lang,
+            "code" => self.code_lang(),
             "markdown" => "md",
             _ => "txt",
         }
@@ -3067,6 +3130,51 @@ mod tests {
         assert!(footer);
         assert_eq!(shown, max_output_rows() + rows);
         assert_eq!(start, block.out_len() - shown);
+    }
+
+    #[test]
+    fn a_language_without_a_grammar_uses_the_kernels_lexer_hint() {
+        let cell: Cell = serde_json::from_value(serde_json::json!({
+            "cell_type": "code", "metadata": {}, "source": "x := 1", "outputs": []
+        }))
+        .unwrap();
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            "metadata".into(),
+            serde_json::json!({"language_info": {"name": "giac", "pygments_lexer": "matlab"}}),
+        );
+        let nb = Notebook { cells: vec![cell], extra, header: None };
+        let mut r = Rendered::build(&nb, None, Default::default());
+        assert_eq!(r.cell_lang(&nb.cells[0]), "matlab");
+        // and when the kernel reports it at run time
+        r.set_language_info(
+            &serde_json::json!({"name": "giac", "codemirror_mode": {"name": "matlab"}}),
+        );
+        assert_eq!(r.cell_lang(&nb.cells[0]), "matlab");
+        // hints no grammar knows: the name stays, highlighted as plain text
+        r.set_language_info(&serde_json::json!({"name": "giac", "pygments_lexer": "nosuchlexer"}));
+        assert_eq!(r.cell_lang(&nb.cells[0]), "giac");
+        // a known name wins over the hints
+        r.set_language_info(&serde_json::json!({"name": "r", "pygments_lexer": "matlab"}));
+        assert_eq!(r.cell_lang(&nb.cells[0]), "r");
+    }
+
+    #[test]
+    fn grammars_in_the_user_syntaxes_folder_are_loaded() {
+        let dir = std::env::temp_dir().join(format!("jotter-syntaxes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("Toy.sublime-syntax"),
+            "%YAML 1.2\n---\nname: Toy\nfile_extensions: [toy]\nscope: source.toy\n\
+             contexts:\n  main:\n    - match: '\\bfoo\\b'\n      scope: keyword.toy\n",
+        )
+        .unwrap();
+        let ps = syntax_set_with(Some(dir.clone()));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(ps.find_syntax_by_token("toy").is_some());
+        assert!(ps.find_syntax_by_token("python").is_some(), "bundled grammars stay");
+        // a missing folder is fine
+        assert!(syntax_set_with(Some(dir)).find_syntax_by_token("python").is_some());
     }
 
     #[test]
