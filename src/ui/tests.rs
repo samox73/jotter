@@ -1,4 +1,3 @@
-
 #![allow(deprecated)] // Picker::from_fontsize is the only headless constructor
 use base64::Engine;
 use ratatui_image::{FontSize, picker::Picker};

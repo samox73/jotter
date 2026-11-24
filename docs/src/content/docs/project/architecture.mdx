@@ -12,7 +12,7 @@ jOtter is a single Rust binary, built on [ratatui](https://ratatui.rs) for drawi
 | Module | Responsibility |
 | --- | --- |
 | `main.rs` | Command line, terminal setup and teardown, the event loop |
-| `app.rs`, `app/` | Application state and key handling; cell operations and undo (`cellops.rs`); completion (`completion.rs`) |
+| `app.rs`, `app/` | Application state (`app.rs`); key dispatch (`keys.rs`) and mouse (`mouse.rs`); the editing session (`edit.rs`); kernel lifecycle and executions (`exec.rs`); saving and autosave (`persist.rs`); cell operations and undo (`cellops.rs`); completion (`completion.rs`) and signature help (`signature.rs`) |
 | `ui.rs`, `ui/` | Rendering: the frame and status line (`ui.rs`); cached cell content (`block.rs`) and the per-cell render cache (`cache.rs`); markdown (`markdown.rs`); overlays (`overlays.rs`) |
 | `notebook.rs` | The nbformat model, lossless loading and saving |
 | `kernel.rs` | Finding, starting and talking to the Jupyter kernel over ZeroMQ |
