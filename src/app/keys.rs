@@ -567,6 +567,7 @@ impl App {
                     self.message = Some("debug info copied to clipboard".into());
                     return Action::Copy(text);
                 }
+                KeyCode::Char('Y') => return self.yank_output(),
                 KeyCode::Char('z') => self.pending = Some('z'),
                 KeyCode::Char('Z') => {
                     if let Some(cell) = self.notebook.cells.get(self.selected) {

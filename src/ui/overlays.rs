@@ -542,6 +542,7 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
         "Outputs",
         &[
             ("o", "hide / show output"),
+            ("Y", "copy output text to the clipboard"),
             ("c C", "clear output / all outputs"),
             ("[ ]", "scroll long output"),
             ("zi", "zoom image fullscreen"),

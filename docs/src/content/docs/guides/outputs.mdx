@@ -25,6 +25,8 @@ Output follows Jupyter's rules for streams:
 
 Each cell keeps at most the last 10,000 lines of stream output, so a runaway loop can't swamp memory.
 
+<kbd>Y</kbd> copies the selected cell's output text (printed text, results and tracebacks, without the colours) to the system clipboard, through the terminal's OSC 52 support.
+
 ## Long outputs
 
 Outputs taller than 15 rows (the [`max_output_rows`](/jotter/reference/configuration/#max_output_rows) setting) are shown in a scrollable viewport. While a cell is running, the viewport sticks to the newest line.

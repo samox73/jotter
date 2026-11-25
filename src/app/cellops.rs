@@ -2,7 +2,10 @@
 //! as self-inverting `CellOp`s: `App::apply` performs one and returns its
 //! inverse, so the same ops drive edits, undo, and redo.
 
+use ansi_to_tui::IntoText;
+
 use super::*;
+use crate::notebook::join_multiline;
 
 /// A notebook-level cell edit. `App::apply` performs one and returns its
 /// inverse, so the same ops drive edits, undo, and redo (both stacks hold
@@ -386,6 +389,42 @@ impl App {
         });
         Action::Copy(sources)
     }
+
+    /// `Y`: the selected cell's output text (streams, text/plain results
+    /// that aren't images, tracebacks; colours stripped) onto the system
+    /// clipboard.
+    pub(super) fn yank_output(&mut self) -> Action {
+        let outputs = self.notebook.cells.get(self.selected).and_then(|c| c.outputs.as_ref());
+        let text = (outputs.into_iter().flatten())
+            .map(|o| {
+                let raw = match &o["traceback"] {
+                    Value::Array(tb) => {
+                        tb.iter().filter_map(|l| l.as_str()).collect::<Vec<_>>().join("\n")
+                    }
+                    _ if o["output_type"] == "stream" => join_multiline(&o["text"]),
+                    // an image's text/plain is only its repr (`<Figure size …>`)
+                    _ if (o["data"].as_object().into_iter().flatten())
+                        .any(|(mime, _)| mime.starts_with("image/")) =>
+                    {
+                        String::new()
+                    }
+                    _ => join_multiline(&o["data"]["text/plain"]),
+                };
+                // any remaining \r is a pending-overwrite marker from stream collapsing
+                let raw = raw.replace('\r', "");
+                let plain = raw.into_text().map(|t| t.to_string()).unwrap_or(raw);
+                plain.trim_end_matches('\n').to_string()
+            })
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if text.is_empty() {
+            self.message = Some("no text output in this cell".into());
+            return Action::None;
+        }
+        self.message = Some("output copied to the clipboard".into());
+        Action::Copy(text)
+    }
 }
 
 /// Run `cmd` through `sh -c` (so pipelines work) with `source` on stdin
@@ -437,7 +476,10 @@ fn run_formatter(
 
 #[cfg(test)]
 mod tests {
-    use crate::app::tests::{key, one_cell_app, sources, stream};
+    use crate::app::{
+        Action,
+        tests::{key, one_cell_app, sources, stream},
+    };
 
     #[test]
     fn split_merge_clear_undo_redo_roundtrip() {
@@ -488,6 +530,20 @@ mod tests {
         assert_eq!(app.selected, 0);
         app.undo();
         assert_eq!(app.selected, 1, "undoing a move follows the cell back");
+    }
+
+    #[test]
+    fn capital_y_copies_the_output_text_without_colours() {
+        let mut app = one_cell_app("yank-output");
+        assert!(matches!(app.on_key(key('Y')), Action::None), "nothing to copy yet");
+        app.notebook.cells[0].push_output(stream("a\n\x1b[31mb\x1b[0m\n"));
+        app.notebook.cells[0].push_output(serde_json::json!({
+            "output_type": "execute_result", "data": {"text/plain": "42"}, "metadata": {}}));
+        app.notebook.cells[0].push_output(serde_json::json!({
+            "output_type": "display_data", "metadata": {},
+            "data": {"text/plain": "<Figure>", "image/png": ""}}));
+        let Action::Copy(text) = app.on_key(key('Y')) else { panic!("no copy") };
+        assert_eq!(text, "a\nb\n42");
     }
 
     #[test]
