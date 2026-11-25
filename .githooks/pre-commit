@@ -1,0 +1,18 @@
+#!/bin/sh
+# CI's fmt check, on the staged content of the staged Rust files (not the
+# working tree: a formatted but unstaged file must not pass). Enable once
+# per clone:
+#   git config core.hooksPath .githooks
+files=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs')
+[ -z "$files" ] && exit 0
+# shellcheck disable=SC2086 # no spaces in this repo's paths
+exec nix develop .#fmt -c sh -c '
+    status=0
+    for f; do
+        # on stdin `rustfmt --check` exits 0 either way: go by the diff it prints
+        [ -z "$(git show ":$f" | rustfmt --check)" ] || {
+            echo "not formatted (make fmt, then git add): $f"
+            status=1
+        }
+    done
+    exit $status' sh $files
