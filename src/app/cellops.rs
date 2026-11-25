@@ -2,9 +2,10 @@
 //! as self-inverting `CellOp`s: `App::apply` performs one and returns its
 //! inverse, so the same ops drive edits, undo, and redo.
 
+use ansi_to_tui::IntoText;
+
 use super::*;
 use crate::notebook::join_multiline;
-use ansi_to_tui::IntoText;
 
 /// A notebook-level cell edit. `App::apply` performs one and returns its
 /// inverse, so the same ops drive edits, undo, and redo (both stacks hold
