@@ -19,7 +19,7 @@ Open, edit and run real `.ipynb` notebooks in your terminal, with vim keys, inli
 </div>
 
 - **Your notebooks, untouched:** opens and saves `.ipynb` losslessly, byte for byte like Jupyter, so collaborators on JupyterLab never notice. Keeps notebooks as `.py` scripts (jupytext's percent format) too, so outputs never reach git.
-- **Plots and math in the terminal:** matplotlib figures inline (kitty graphics, sixel, iTerm2), drawn in your terminal's colours, and LaTeX rendered without a TeX install.
+- **Plots and math in the terminal:** matplotlib figures inline (kitty graphics, sixel, iTerm2), drawn in your terminal's colours, and LaTeX rendered without a TeX install. Or as Braille text with `--braille`, for plots from any kernel in any terminal.
 - **Vim keys everywhere:** a modal cell editor, or an embedded Neovim with your own config.
 - **Any kernel:** finds your project's venv, uv, conda or pixi environment on its own.
 - **Hard to lose work:** atomic saves, autosave and crash recovery, and no silent overwrites.

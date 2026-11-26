@@ -47,7 +47,13 @@ Clearing can be undone with <kbd>u</kbd>.
 
 PNG, JPEG, GIF and SVG outputs render inline. That covers matplotlib, seaborn, plotnine, PIL images and anything else that displays an image.
 
-Images use the terminal's graphics protocol, which jOtter requires. See [Terminal setup](/jotter/getting-started/terminal-setup/).
+Images use the terminal's graphics protocol, which jOtter requires unless plots are drawn as Braille text (below). See [Terminal setup](/jotter/getting-started/terminal-setup/).
+
+### Braille plots
+
+`jotter --braille` draws plots as Braille text instead of images: two by four dots per character, in the colours of the plot's lines (black and grey lines take the terminal's text colour). It works for every kernel, because it draws the image the kernel sends, so Python, R, Julia, Giac or Octave plots all show up, and in any terminal, including ones without a graphics protocol (the Linux console, plain ssh). Math is then shown as a Unicode approximation.
+
+A Braille plot is text, so it fits inside the output viewport ([`max_output_rows`](/jotter/reference/configuration/#max_output_rows)); raise that for bigger plots. <kbd>Z</kbd> draws it at full size.
 
 An image is shown at its own size, scaled so that it is as large next to the text as in JupyterLab, and scaled down to the window's width when it is wider. On a HiDPI screen that enlarges a plain figure, which softens it; matplotlib's `retina` format takes the same space and stays sharp: run `%config InlineBackend.figure_format = 'retina'` in a notebook, or set [`figure_format = "retina"`](/jotter/reference/configuration/#figure_format) to have jOtter do it for every Python kernel. Set [`image_scale`](/jotter/reference/configuration/#image_scale) to `1` to show images pixel for pixel. To keep tall images from pushing the next cell off the screen, set a height limit with [`max_image_rows`](/jotter/reference/configuration/#max_image_rows).
 

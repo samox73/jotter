@@ -1010,3 +1010,57 @@ fn log_rows_hang_under_the_message() {
     assert_eq!(text(log_rows(&e, 5, 50, true)).len(), 1);
     assert!(text(log_rows(&e, 4, 30, false))[1].starts_with(|c: char| c != ' '));
 }
+
+/// A cell whose output is a 200x100 PNG: white, with a black diagonal.
+fn plot_notebook() -> Notebook {
+    let mut img = image::RgbImage::from_pixel(200, 100, image::Rgb([255, 255, 255]));
+    for x in 0..200 {
+        img.put_pixel(x, x / 2, image::Rgb([0, 0, 0]));
+    }
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgb8(img)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+    let cell: Cell = serde_json::from_value(serde_json::json!({
+        "cell_type": "code", "metadata": {}, "source": "plot()",
+        "outputs": [{"output_type": "display_data", "metadata": {},
+                     "data": {"image/png": b64, "text/plain": "<Figure>"}}]
+    }))
+    .unwrap();
+    Notebook { cells: vec![cell], extra: Default::default(), header: None }
+}
+
+/// Braille characters with at least one dot: grows with the plot's size.
+fn braille_cols(block: &CellBlock) -> usize {
+    let dotted = |c: &char| ('\u{2801}'..='\u{28ff}').contains(c);
+    block
+        .lines
+        .iter()
+        .flat_map(|l| &l.spans)
+        .map(|s| s.content.chars().filter(dotted).count())
+        .sum()
+}
+
+/// `--braille`: a plot output is drawn as Braille dots, and drawn again for
+/// a new width. Without it (and without graphics) the text/plain stands in.
+#[test]
+fn braille_plots_only_with_braille_on_and_redrawn_for_a_new_width() {
+    let nb = plot_notebook();
+    let mut r = Rendered::build(&nb, None, Default::default());
+    r.relayout(80, &nb);
+    r.ensure(0, &nb.cells[0]);
+    assert_eq!(braille_cols(&r.blocks[0]), 0, "braille off");
+
+    let mut r = Rendered::build(&nb, None, Default::default());
+    r.set_braille(true);
+    r.relayout(80, &nb);
+    r.ensure(0, &nb.cells[0]);
+    let wide = braille_cols(&r.blocks[0]);
+    assert!(wide > 0, "a diagonal has dots");
+    assert!(r.blocks[0].braille);
+
+    r.relayout(30, &nb);
+    let narrow = braille_cols(&r.blocks[0]);
+    assert!(narrow > 0 && narrow < wide, "redrawn narrower: {narrow} vs {wide}");
+}
