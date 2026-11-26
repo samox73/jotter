@@ -10,11 +10,18 @@ jOtter follows the [XDG base directory](https://specifications.freedesktop.org/b
 | What | Path | Notes |
 | --- | --- | --- |
 | Configuration | `$XDG_CONFIG_HOME/jotter/config.toml`, default `~/.config/jotter/config.toml` | Optional; `jotter config` opens it in your editor. See [Configuration](/jotter/reference/configuration/). |
+| Extra grammars | `$XDG_CONFIG_HOME/jotter/syntaxes/`, default `~/.config/jotter/syntaxes/` | Optional. `.sublime-syntax` files (the format bat and Sublime Text use) for languages jOtter has no grammar for. See [Syntax highlighting](#syntax-highlighting). |
 | Autosaves | `$XDG_STATE_HOME/jotter/autosave/`, default `~/.local/state/jotter/autosave/` | One file per notebook, named after its absolute path with `/` replaced by `%`. Removed when you save. |
 | Debug log | wherever `--log` points | Only written with `--log`; appended to, never truncated. |
 | External-editor file | `$TMPDIR/jotter-cell-<pid>.<ext>`, default `/tmp` | Exists only while <kbd>Ctrl</kbd>+<kbd>g</kbd> is open. |
 
 The kernel's own files, such as its connection file, are handled by the Jupyter libraries in their usual runtime directory.
+
+## Syntax highlighting
+
+Code cells are highlighted with the grammar for the notebook's language (`language_info.name`, else `kernelspec.language`). When no grammar knows that name, jOtter tries the kernel's hints: `language_info.pygments_lexer`, then `codemirror_mode`. A kernel for a language without a grammar can name a close one there.
+
+To add a grammar, put its `.sublime-syntax` file in `~/.config/jotter/syntaxes/`. It is read at startup alongside the bundled ones; a file that fails to load is skipped with a warning in the log.
 
 ## Kernelspecs
 
