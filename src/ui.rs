@@ -640,7 +640,7 @@ fn paint_overlays(
     }
     match &mut app.overlay {
         Some(Overlay::Help(help)) => draw_help(frame, help),
-        Some(Overlay::Logs(up)) => draw_logs(frame, up),
+        Some(Overlay::Logs(logs)) => draw_logs(frame, logs),
         Some(Overlay::Debug(text)) => draw_debug(frame, text),
         Some(Overlay::Pager(pager)) => draw_pager(frame, pager),
         // centered, any key closes

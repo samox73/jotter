@@ -60,12 +60,24 @@ impl App {
             // false: the key was not for the overlay, so it closes
             let keep = match overlay {
                 Overlay::Debug(_) | Overlay::Zoom(_) => false,
-                Overlay::Logs(up) => {
+                Overlay::Logs(logs) => {
                     // rows up from the newest
                     if let Some(d) = scroll {
-                        *up = up.saturating_add_signed(d.saturating_neg());
+                        logs.up = logs.up.saturating_add_signed(d.saturating_neg());
+                    }
+                    match key.code {
+                        KeyCode::Char('w') => logs.nowrap ^= true,
+                        KeyCode::Char('h') | KeyCode::Left => {
+                            logs.x = logs.x.saturating_sub(LOG_HSTEP)
+                        }
+                        KeyCode::Char('l') | KeyCode::Right => logs.x += LOG_HSTEP,
+                        _ => {}
                     }
                     scroll.is_some()
+                        || matches!(
+                            key.code,
+                            KeyCode::Char('w' | 'h' | 'l') | KeyCode::Left | KeyCode::Right
+                        )
                 }
                 Overlay::Pager(pager) => {
                     if let Some(d) = scroll {
@@ -559,7 +571,7 @@ impl App {
                 }
                 KeyCode::Char('R') => self.confirm = Some(Confirm::Restart),
                 KeyCode::Char('?') => self.overlay = Some(Overlay::Help(Help::default())),
-                KeyCode::Char('L') => self.overlay = Some(Overlay::Logs(0)),
+                KeyCode::Char('L') => self.overlay = Some(Overlay::Logs(Logs::default())),
                 KeyCode::Char('D') => {
                     let text = self.debug_report();
                     log::info!(target: "debug", "{}", text.replace('\n', " | "));

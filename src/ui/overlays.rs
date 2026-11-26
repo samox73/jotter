@@ -99,9 +99,49 @@ pub(super) fn draw_stdin(frame: &mut Frame, req: &crate::app::StdinReq) {
     frame.render_widget(Paragraph::new(tail), inner);
 }
 
+/// One log entry as rows `width` columns wide: time (right-aligned to
+/// `secs_w` columns), level and target, then the message, wrapped rows
+/// hanging under its start (`nowrap`: one row).
+pub(super) fn log_rows(
+    e: &crate::log::Entry,
+    secs_w: usize,
+    width: usize,
+    nowrap: bool,
+) -> Vec<Line<'static>> {
+    let level = match e.level {
+        log::Level::Error => Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+        log::Level::Warn => Style::new().fg(Color::Yellow),
+        _ => Style::new().fg(Color::Green),
+    };
+    let mut head = vec![
+        Span::styled(format!("{:>secs_w$.2}s ", e.secs), Style::new().fg(Color::DarkGray)),
+        Span::styled(format!("{:<5} ", e.level), level),
+        Span::styled(format!("{} ", e.target), Style::new().fg(Color::Blue)),
+    ];
+    let mut body = vec![Span::raw(e.msg.clone())];
+    let mut hang: usize = head.iter().map(Span::width).sum();
+    // a panel too narrow to hang in wraps the whole line instead
+    if !nowrap && hang * 2 > width {
+        body.splice(0..0, head.drain(..));
+        hang = 0;
+    }
+    let room = if nowrap { 0 } else { width - hang };
+    let rows = wrap_lines(&[Line::from(body)], room as u16).rows;
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let mut spans = if i == 0 { head.clone() } else { vec![Span::raw(" ".repeat(hang))] };
+            spans.extend(row.spans);
+            Line::from(spans)
+        })
+        .collect()
+}
+
 /// `L`: the in-memory log (status messages, kernel lifecycle, warnings from
-/// dependencies), newest at the bottom. `up` = rows scrolled up; clamped here.
-pub(super) fn draw_logs(frame: &mut Frame, up: &mut usize) {
+/// dependencies), newest at the bottom. Long messages wrap, hanging under
+/// their first row; `w` unwraps them to scroll sideways instead. The scroll
+/// positions are clamped here.
+pub(super) fn draw_logs(frame: &mut Frame, logs: &mut crate::app::Logs) {
     let area = frame.area();
     let panel = overlay_rect(
         area,
@@ -109,35 +149,35 @@ pub(super) fn draw_logs(frame: &mut Frame, up: &mut usize) {
         area.height.saturating_sub(2),
     );
     let rows = panel.height.saturating_sub(2) as usize;
-    let lines: Vec<Line> = crate::log::with_entries(|entries| {
-        *up = (*up).min(entries.len().saturating_sub(rows));
-        let end = entries.len() - *up;
-        entries
-            .range(end.saturating_sub(rows)..end)
-            .map(|e| {
-                let level = match e.level {
-                    log::Level::Error => Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
-                    log::Level::Warn => Style::new().fg(Color::Yellow),
-                    _ => Style::new().fg(Color::Green),
-                };
-                Line::from(vec![
-                    Span::styled(format!("{:>8.2}s ", e.secs), Style::new().fg(Color::DarkGray)),
-                    Span::styled(format!("{:<5} ", e.level), level),
-                    Span::styled(format!("{} ", e.target), Style::new().fg(Color::Blue)),
-                    Span::raw(e.msg.clone()),
-                ])
-            })
-            .collect()
+    let width = panel.width.saturating_sub(4) as usize; // less borders + padding
+    let nowrap = logs.nowrap;
+    // ponytail: lays out the whole ring (≤ 2000 entries) per frame while the
+    // overlay is open; cache it if that ever shows up in a profile
+    let mut lines: Vec<Line> = crate::log::with_entries(|entries| {
+        // times only grow: the newest is the widest
+        let secs_w = entries.back().map_or(0, |e| format!("{:.2}", e.secs).len());
+        entries.iter().flat_map(|e| log_rows(e, secs_w, width, nowrap)).collect()
     });
-    let title = if *up == 0 { "logs".to_string() } else { format!("logs · {} newer below", *up) };
-    let inner = modal(frame, panel, &title, "j/k PgUp/PgDn g/G scroll · any other key closes");
+    logs.up = logs.up.min(lines.len().saturating_sub(rows));
+    let widest = lines.iter().map(Line::width).max().unwrap_or(0);
+    logs.x = if nowrap { logs.x.min(widest.saturating_sub(width)) } else { 0 };
+    lines.truncate(lines.len() - logs.up);
+    lines.drain(..lines.len().saturating_sub(rows));
+    let title =
+        if logs.up == 0 { "logs".to_string() } else { format!("logs · {} newer below", logs.up) };
+    let hint = if nowrap {
+        "h/j/k/l PgUp/PgDn g/G scroll · w wraps · any other key closes"
+    } else {
+        "j/k PgUp/PgDn g/G scroll · w unwraps · any other key closes"
+    };
+    let inner = modal(frame, panel, &title, hint);
     if lines.is_empty() {
         frame.render_widget(
             Paragraph::new(Line::styled("(empty)", Style::new().fg(Color::DarkGray))),
             inner,
         );
     } else {
-        frame.render_widget(Paragraph::new(lines), inner);
+        frame.render_widget(Paragraph::new(lines).scroll((0, logs.x as u16)), inner);
     }
 }
 

@@ -147,12 +147,26 @@ pub struct Help {
     pub top: usize,
 }
 
+/// `L` log viewer; positions are clamped by the draw.
+#[derive(Default)]
+pub struct Logs {
+    /// Rows scrolled up from the newest entry.
+    pub up: usize,
+    /// `w` turned word wrap off: long lines scroll sideways instead.
+    pub nowrap: bool,
+    /// Columns scrolled right (unwrapped only).
+    pub x: usize,
+}
+
+/// Columns one `h`/`l` press or horizontal wheel tick scrolls the log.
+const LOG_HSTEP: usize = 8;
+
 /// What covers the notebook, one at a time; keys go to it first.
 pub enum Overlay {
     /// `?`: the key reference.
     Help(Help),
-    /// `L` log viewer: rows scrolled up from the newest entry.
-    Logs(usize),
+    /// `L` log viewer.
+    Logs(Logs),
     /// Shift+Tab docs.
     Pager(Pager),
     /// `D` debug text (also copied to the clipboard).

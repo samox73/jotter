@@ -14,7 +14,15 @@ impl App {
             Some(Overlay::Pager(Pager { top, .. }) | Overlay::Help(Help { top, .. })) => {
                 return *top = top.saturating_add_signed(wheel);
             }
-            Some(Overlay::Logs(up)) => return *up = up.saturating_add_signed(-wheel),
+            Some(Overlay::Logs(logs)) => {
+                logs.up = logs.up.saturating_add_signed(-wheel);
+                match mouse.kind {
+                    MouseEventKind::ScrollLeft => logs.x = logs.x.saturating_sub(LOG_HSTEP),
+                    MouseEventKind::ScrollRight => logs.x += LOG_HSTEP,
+                    _ => {}
+                }
+                return;
+            }
             Some(Overlay::Debug(_) | Overlay::Zoom(_)) => return,
             None if self.confirm.is_some() => return,
             None => {}
