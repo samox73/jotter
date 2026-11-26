@@ -154,7 +154,7 @@ fn spawn_process(
             let mut lines = tokio::io::BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 if !line.trim().is_empty() {
-                    log::debug!("kernel stderr: {line}");
+                    log::info!("kernel stderr: {line}");
                     *last.lock().unwrap() = line;
                 }
             }
