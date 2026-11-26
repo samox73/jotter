@@ -386,7 +386,9 @@ impl Rendered {
             let size = ratatui::layout::Size::new(entry.cols, entry.rows);
             let compress = picker.capabilities().contains(&Capability::KittyCompression);
             let tmux = picker.tmux_detected();
-            let kitty = Kitty::new(img, size, id, tmux, compress).ok()?;
+            let kitty =
+                Kitty::new(pad_to_cells(img, size, picker.font_size()), size, id, tmux, compress)
+                    .ok()?;
             entry.kitty = Some(KittyImage { id, tmux });
             KITTY_TRANSMIT.store(true, std::sync::atomic::Ordering::Relaxed);
             SlicedProtocol::Kitty(kitty)
@@ -539,6 +541,25 @@ impl Rendered {
 /// Display math rows a layout pass assumes before rendering (capped by
 /// max_math_rows); the real height corrects it once the cell is on screen.
 const MATH_ROWS_GUESS: u16 = 2;
+
+/// `img` centred on a transparent canvas of exactly `size` cells. kitty
+/// stretches an image to fill its cells, and those are its size rounded up:
+/// unpadded, every image is resampled by a percent or two and its lines blur.
+pub(super) fn pad_to_cells(
+    img: image::DynamicImage,
+    size: ratatui::layout::Size,
+    font: ratatui_image::FontSize,
+) -> image::DynamicImage {
+    let (w, h) = (size.width as u32 * font.width as u32, size.height as u32 * font.height as u32);
+    if w <= img.width() && h <= img.height() {
+        return img;
+    }
+    let (w, h) = (w.max(img.width()), h.max(img.height()));
+    let mut canvas = image::RgbaImage::new(w, h);
+    let at = |outer: u32, inner: u32| ((outer - inner) / 2) as i64;
+    image::imageops::overlay(&mut canvas, &img.to_rgba8(), at(w, img.width()), at(h, img.height()));
+    image::DynamicImage::ImageRgba8(canvas)
+}
 
 /// An output's base64 payload, decoded.
 pub(super) fn b64_bytes(v: &Value) -> Option<Vec<u8>> {
