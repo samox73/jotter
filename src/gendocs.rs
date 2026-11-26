@@ -99,7 +99,7 @@ fn configuration() -> String {
         "reference/configuration",
         "the Config struct in src/config.rs",
     );
-    s += "jOtter reads `$XDG_CONFIG_HOME/jotter/config.toml` (usually `~/.config/jotter/config.toml`) once at startup. The file is optional and so is every key: anything missing takes its default. A typo or an unknown key is not silently ignored: jOtter starts with all defaults and shows a warning in the status line.\n\n";
+    s += "jOtter reads `$XDG_CONFIG_HOME/jotter/config.toml` (usually `~/.config/jotter/config.toml`) once at startup; `jotter config` opens it in your editor and reports mistakes when you close it. The file is optional and so is every key: anything missing takes its default. A typo or an unknown key is not silently ignored: jOtter starts with all defaults and shows a warning in the status line.\n\n";
     let defaults = toml::Table::try_from(Config::default()).expect("Config serializes");
     s += "## Defaults\n\nA complete file with every key at its default value:\n\n```toml\n";
     s += &toml::to_string(&Config::default()).expect("Config serializes"); // struct order
@@ -108,6 +108,7 @@ fn configuration() -> String {
         let ty = match ty {
             "bool" => "boolean",
             "String" => "string",
+            "f32" => "number",
             _ => "integer",
         };
         let default = defaults.get(name).map(|v| v.to_string()).unwrap_or_default();
