@@ -22,6 +22,13 @@ pub struct Config {
     /// them sharp. Set `1` to show images pixel for pixel. See [images and
     /// plots](/jotter/guides/outputs/#images).
     pub image_scale: f32,
+    /// The format matplotlib draws inline figures in, set on every Python kernel jOtter starts:
+    /// `"retina"` (matplotlib's name for PNGs with twice the pixels, which stay sharp when
+    /// enlarged, on any screen), `"png"` or `"svg"`. Empty, the default, leaves the kernel's own
+    /// setting alone. `"retina"` makes saved notebooks larger. It is the same as running `%config
+    /// InlineBackend.figure_format = "retina"` in a cell. See
+    /// [images](/jotter/guides/outputs/#images).
+    pub figure_format: String,
     /// Display math taller than this many terminal rows is scaled down to fit: `$$…$$` in
     /// markdown, latex cells, and LaTeX outputs such as SymPy's. Inline `$…$` math always takes
     /// one row. See [math](/jotter/guides/math/).
@@ -89,6 +96,7 @@ impl Default for Config {
         Self {
             max_image_rows: 0,
             image_scale: 0.0,
+            figure_format: String::new(),
             max_math_rows: 4,
             max_output_rows: 15,
             autosave_secs: 30,

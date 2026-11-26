@@ -243,6 +243,16 @@ impl App {
                 if kernel.language.eq_ignore_ascii_case("python") && !crate::config::get().jedi {
                     kernel.execute_silent("%config Completer.use_jedi = False");
                 }
+                // letters only: the value goes into code
+                let format = &crate::config::get().figure_format;
+                if kernel.language.eq_ignore_ascii_case("python")
+                    && !format.is_empty()
+                    && format.chars().all(|c| c.is_ascii_alphanumeric())
+                {
+                    kernel.execute_silent(&format!(
+                        "%config InlineBackend.figure_format = '{format}'"
+                    ));
+                }
                 self.exec.kernel = Some(*kernel);
                 self.exec.kernel_starting = false;
                 for id in std::mem::take(&mut self.exec.deferred) {
