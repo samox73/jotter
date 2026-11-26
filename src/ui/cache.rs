@@ -611,8 +611,8 @@ pub(super) fn display_px(output: &Value, px: (u32, u32)) -> (u32, u32) {
 /// config knob, else a terminal row over a JupyterLab code line, so a plot
 /// spans as many text rows here as there. Never below 1: shrinking only
 /// throws pixels away.
-// ponytail: 17 is JupyterLab's default theme (13px code font, line-height
-// 1.3077) from memory; image_scale overrides it.
+// 17: JupyterLab's default theme (--jp-code-font-size 13px times
+// --jp-code-line-height 1.3077); a custom theme there needs image_scale.
 pub(super) fn image_scale(font_height: u16) -> f32 {
     match crate::config::get().image_scale {
         s if s > 0.0 => s,

@@ -585,9 +585,9 @@ impl App {
                     if let Some(cell) = self.notebook.cells.get(self.selected) {
                         let native = self.rendered.toggle_full_images(self.selected, cell);
                         self.message = Some(if native {
-                            "images at native size — Z fits them to the window again".into()
+                            "images pixel for pixel — Z scales them again".into()
                         } else {
-                            "images fitted to the window again".into()
+                            "images at their display size again".into()
                         });
                     }
                 }
