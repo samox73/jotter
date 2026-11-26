@@ -22,7 +22,7 @@ use syntect::{
 use unicode_width::UnicodeWidthChar;
 
 use super::{
-    ERROR_STYLE, OUTPUT_STYLE, STDERR_STYLE,
+    ERROR_STYLE, GUTTER, OUTPUT_STYLE, STDERR_STYLE,
     block::{CellBlock, InlineImage, KITTY_TRANSMIT, KittyImage},
     max_image_rows,
 };
@@ -111,7 +111,16 @@ impl Rendered {
             if b.laid_for == Some(width) {
                 continue;
             }
-            if b.rendered {
+            // an image fitted to the old width (or too wide for the new one)
+            // changes size: back to a measured block, re-rendered when seen
+            let refit = b
+                .images
+                .iter()
+                .any(|im| im.want.is_some_and(|px| self.shown_px(px, false) != Some(im.px)));
+            if b.rendered && refit {
+                let new = self.render_cell(cell, b.full_images, true);
+                self.replace(i, new);
+            } else if b.rendered {
                 self.blocks[i].rewrap(width);
             } else {
                 let rows = self.render_cell(cell, b.full_images, true).rows;
@@ -365,19 +374,31 @@ impl Rendered {
     }
 
     /// Wrap a decoded image into a protocol + terminal-cell dimensions.
-    /// Anything taller than max_image_rows is downscaled once, here, with a
-    /// real filter; render-time then never rescales (its default filter is
-    /// nearest-neighbor, which aliases plot lines badly). SlicedProtocol
-    /// transmits once and clips per-row when partially scrolled off.
+    /// Whatever its size comes to on screen (see `shown_px`) it is scaled to
+    /// once, here, with a real filter; render-time then never rescales (its
+    /// default filter is nearest-neighbor, which aliases plot lines badly).
+    /// SlicedProtocol transmits once and clips per-row when partially
+    /// scrolled off.
     pub(super) fn image_entry(&self, img: image::DynamicImage, full: bool) -> Option<InlineImage> {
+        let px = (img.width(), img.height());
+        self.image_entry_at(img, px, full)
+    }
+
+    /// `image_entry` for an image that asks to be shown at `want` pixels.
+    fn image_entry_at(
+        &self,
+        img: image::DynamicImage,
+        want: (u32, u32),
+        full: bool,
+    ) -> Option<InlineImage> {
         let picker = self.picker.as_ref()?;
-        let (w, h) = self.shown_px((img.width(), img.height()), full)?;
+        let mut entry = self.sized(want, full)?;
+        let (w, h) = entry.px;
         let img = if (w, h) != (img.width(), img.height()) {
             img.resize_exact(w, h, image::imageops::FilterType::Lanczos3)
         } else {
             img
         };
-        let mut entry = self.sized_px((w, h))?;
         // kitty: our own id, so the terminal's copy can be deleted on drop
         entry.proto = Some(if picker.protocol_type() == ProtocolType::Kitty {
             use std::sync::atomic::{AtomicU32, Ordering};
@@ -398,26 +419,31 @@ impl Rendered {
         Some(entry)
     }
 
-    /// Pixel size an image of `px` is shown at: taller than max_image_rows
-    /// is scaled down to it, unless `full`. None without graphics.
-    fn shown_px(&self, (w, h): (u32, u32), full: bool) -> Option<(u32, u32)> {
-        let fh = self.picker.as_ref()?.font_size().height as u32;
-        let max_h = max_image_rows() as u32 * fh;
-        Some(if !full && h > max_h {
-            ((w as u64 * max_h as u64 / h as u64).max(1) as u32, max_h)
-        } else {
-            (w, h)
-        })
+    /// Pixel size an image of `px` is shown at: its own, scaled down to the
+    /// body width when wider (as JupyterLab does). Then the row cap
+    /// (max_image_rows, off by default). `full` skips both. None without
+    /// graphics.
+    fn shown_px(&self, px: (u32, u32), full: bool) -> Option<(u32, u32)> {
+        let font = self.picker.as_ref()?.font_size();
+        if full {
+            return Some(px);
+        }
+        // less the gutter: images in a source (markdown) sit right of it
+        let max_w = self.width.saturating_sub(GUTTER) as u32 * font.width as u32;
+        let max_h = max_image_rows() as u32 * font.height as u32;
+        Some(fit_px(px, max_w, max_h))
     }
 
-    /// An image of `px` shown pixels, sized in cells (as the protocols round:
-    /// up) but not encoded.
-    fn sized_px(&self, (w, h): (u32, u32)) -> Option<InlineImage> {
+    /// Layout pass: an image of `want` pixels, sized in cells (as the
+    /// protocols round: up) but not encoded.
+    pub(super) fn sized(&self, want: (u32, u32), full: bool) -> Option<InlineImage> {
         let font = self.picker.as_ref()?.font_size();
+        let (w, h) = self.shown_px(want, full)?;
         Some(InlineImage {
             line: 0,
             col: 0,
             px: (w, h),
+            want: (!full).then_some(want),
             cols: (w.div_ceil(font.width.max(1) as u32) as u16).max(1),
             rows: (h.div_ceil(font.height.max(1) as u32) as u16).max(1),
             proto: None,
@@ -425,15 +451,13 @@ impl Rendered {
         })
     }
 
-    /// Layout pass: an image whose decoded size would be `px`.
-    pub(super) fn sized(&self, px: (u32, u32), full: bool) -> Option<InlineImage> {
-        self.sized_px(self.shown_px(px, full)?)
-    }
-
     /// Layout pass: rendered math, guessed at `cols` x `rows` cells.
     pub(super) fn sized_math(&self, cols: usize, rows: u16) -> Option<InlineImage> {
         let font = self.picker.as_ref()?.font_size();
-        self.sized_px((cols.max(1) as u32 * font.width as u32, rows as u32 * font.height as u32))
+        self.sized(
+            (cols.max(1) as u32 * font.width as u32, rows as u32 * font.height as u32),
+            false,
+        )
     }
 
     /// Pixel size of an output's raster/SVG image, from its header.
@@ -460,13 +484,19 @@ impl Rendered {
     }
 
     /// If the output carries a raster/SVG image and graphics are available,
-    /// build a protocol; `full` skips the height cap (native-size toggle).
+    /// build a protocol; `full`: every pixel, unfitted (native-size toggle).
+    /// Otherwise it is shown at the size its metadata asks for (see
+    /// `display_px`), as JupyterLab does, times `image_scale`.
     fn try_image(&self, output: &Value, full: bool, est: bool) -> Option<InlineImage> {
-        self.picker.as_ref()?;
+        let s = image_scale(self.picker.as_ref()?.font_size().height);
+        let scaled = |(w, h): (u32, u32)| ((w as f32 * s) as u32, (h as f32 * s) as u32);
+        let want = |px| if full { px } else { scaled(display_px(output, px)) };
         if est {
-            return self.sized(self.output_image_px(output)?, full);
+            return self.sized(want(self.output_image_px(output)?), full);
         }
-        self.image_entry(self.decode_output_image(output)?, full)
+        let img = self.decode_output_image(output)?;
+        let want = want((img.width(), img.height()));
+        self.image_entry_at(img, want, full)
     }
 
     /// `z`: the cell's first image output, re-decoded at native resolution and
@@ -541,6 +571,54 @@ impl Rendered {
 /// Display math rows a layout pass assumes before rendering (capped by
 /// max_math_rows); the real height corrects it once the cell is on screen.
 const MATH_ROWS_GUESS: u16 = 2;
+
+/// `px` scaled down, keeping its aspect ratio, to at most `max_w` wide and
+/// then `max_h` tall (0: no limit).
+pub(super) fn fit_px((mut w, mut h): (u32, u32), max_w: u32, max_h: u32) -> (u32, u32) {
+    let scale = |a: u32, to: u32, from: u32| (a as u64 * to as u64 / from as u64).max(1) as u32;
+    if max_w > 0 && w > max_w {
+        (w, h) = (max_w, scale(h, max_w, w));
+    }
+    if max_h > 0 && h > max_h {
+        (w, h) = (scale(w, max_h, h), max_h);
+    }
+    (w, h)
+}
+
+/// The size an image output of `px` pixels asks to be shown at: `width` and
+/// `height` in its metadata (a retina figure asks for half its pixels), a
+/// missing one following the aspect ratio.
+pub(super) fn display_px(output: &Value, px: (u32, u32)) -> (u32, u32) {
+    let meta = ["image/png", "image/jpeg", "image/gif", "image/svg+xml"]
+        .iter()
+        .find(|m| output["data"].get(**m).is_some())
+        .map(|m| &output["metadata"][*m]);
+    let get = |k: &str| {
+        let v = meta?.get(k)?.as_f64()?;
+        (v >= 1.0).then_some(v.min(u32::MAX as f64) as u32)
+    };
+    let scale =
+        |a: u32, to: u32, from: u32| (a as u64 * to as u64 / from.max(1) as u64).max(1) as u32;
+    match (get("width"), get("height")) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None) => (w, scale(px.1, w, px.0)),
+        (None, Some(h)) => (scale(px.0, h, px.1), h),
+        (None, None) => px,
+    }
+}
+
+/// Screen pixels per pixel of an image's display size: the `image_scale`
+/// config knob, else a terminal row over a JupyterLab code line, so a plot
+/// spans as many text rows here as there. Never below 1: shrinking only
+/// throws pixels away.
+// ponytail: 17 is JupyterLab's default theme (13px code font, line-height
+// 1.3077) from memory; image_scale overrides it.
+pub(super) fn image_scale(font_height: u16) -> f32 {
+    match crate::config::get().image_scale {
+        s if s > 0.0 => s,
+        _ => (font_height as f32 / 17.0).max(1.0),
+    }
+}
 
 /// `img` centred on a transparent canvas of exactly `size` cells. kitty
 /// stretches an image to fill its cells, and those are its size rounded up:

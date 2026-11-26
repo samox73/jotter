@@ -137,22 +137,80 @@ fn image_output_reserves_lines_and_creates_protocol() {
 }
 
 #[test]
-fn tall_images_prescale_to_row_cap_preserving_aspect() {
+fn images_show_at_their_size_fitted_to_the_width() {
     let nb = Notebook { cells: vec![], extra: serde_json::Map::new(), header: None };
     let picker = Picker::from_fontsize(FontSize::new(8, 16));
-    let r = Rendered::build(&nb, Some(picker), Default::default());
-    // 640x480 > 18*16=288 px tall -> prescaled to exactly the cap
-    let entry = r.image_entry(image::DynamicImage::new_rgba8(640, 480), false).unwrap();
-    assert_eq!(entry.rows, max_image_rows());
-    assert_eq!(entry.cols, 48); // 640 * 288/480 = 384 px / 8 px per col
-
+    let mut r = Rendered::build(&nb, Some(picker), Default::default());
+    let image = || image::DynamicImage::new_rgba8(640, 480);
+    // fits the width: its own size, however tall (no row cap by default)
+    r.width = 100;
+    let entry = r.image_entry(image(), false).unwrap();
+    assert_eq!((entry.cols, entry.rows, entry.px), (80, 30, (640, 480)));
     // small image: untouched, ceil to cells
     let entry = r.image_entry(image::DynamicImage::new_rgba8(100, 100), false).unwrap();
     assert_eq!((entry.cols, entry.rows), (13, 7));
+    // wider than the body (less the gutter: 38 cols = 304 px): scaled down
+    r.width = 40;
+    let entry = r.image_entry(image(), false).unwrap();
+    assert_eq!((entry.cols, entry.px, entry.want), (38, (304, 228), Some((640, 480))));
+    // native-size toggle: its pixels whatever the width, never refitted
+    let entry = r.image_entry(image(), true).unwrap();
+    assert_eq!((entry.cols, entry.rows, entry.want), (80, 30, None));
 
-    // native-size toggle: no prescale, full 480 px = 30 rows
-    let entry = r.image_entry(image::DynamicImage::new_rgba8(640, 480), true).unwrap();
-    assert_eq!((entry.cols, entry.rows), (80, 30));
+    // kitty fills whole cells: padded to them, never stretched
+    let padded = pad_to_cells(image(), ratatui::layout::Size::new(54, 19), FontSize::new(12, 26));
+    assert_eq!((padded.width(), padded.height()), (648, 494));
+
+    // the row cap, when set, applies after the width
+    assert_eq!(fit_px((640, 480), 0, 0), (640, 480));
+    assert_eq!(fit_px((640, 480), 0, 288), (384, 288));
+    assert_eq!(fit_px((640, 480), 320, 120), (160, 120));
+}
+
+#[test]
+fn image_outputs_take_their_size_from_metadata() {
+    let out =
+        |meta: serde_json::Value| serde_json::json!({"data": {"image/png": ""}, "metadata": meta});
+    // retina: twice the pixels, shown at the size of a plain figure
+    let retina = out(serde_json::json!({"image/png": {"width": 640, "height": 480}}));
+    assert_eq!(display_px(&retina, (1280, 960)), (640, 480));
+    // one side given: the other follows the aspect ratio
+    let wide = out(serde_json::json!({"image/png": {"width": 320}}));
+    assert_eq!(display_px(&wide, (1280, 960)), (320, 240));
+    assert_eq!(display_px(&out(serde_json::json!({})), (640, 480)), (640, 480));
+    // a 26px row is 26/17 JupyterLab code lines; small fonts never shrink
+    assert_eq!((640.0 * image_scale(26)) as u32, 978);
+    assert_eq!(image_scale(16), 1.0);
+}
+
+#[test]
+fn a_width_change_refits_images() {
+    let png = {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(640, 480)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        base64::engine::general_purpose::STANDARD.encode(buf.into_inner())
+    };
+    let cell: Cell = serde_json::from_value(serde_json::json!({
+        "cell_type": "code", "source": "", "metadata": {},
+        "outputs": [{"output_type": "display_data", "data": {"image/png": png}, "metadata": {}}],
+    }))
+    .unwrap();
+    let nb = Notebook { cells: vec![cell], extra: serde_json::Map::new(), header: None };
+    let picker = Picker::from_fontsize(FontSize::new(8, 16));
+    let mut r = Rendered::build(&nb, Some(picker), Default::default());
+    let shown = |r: &mut Rendered, width| {
+        r.relayout(width, &nb);
+        r.ensure(0, &nb.cells[0]);
+        (r.blocks[0].images[0].cols, r.blocks[0].rows.2)
+    };
+    assert_eq!(shown(&mut r, 100), (80, 30));
+    assert_eq!(shown(&mut r, 40), (38, 15)); // narrower: scaled down
+    assert_eq!(shown(&mut r, 100), (80, 30)); // and back
+    // wide enough either way: the rendered block is kept, only rewrapped
+    r.relayout(120, &nb);
+    assert!(r.blocks[0].rendered);
 }
 
 #[test]
@@ -206,7 +264,7 @@ fn images_never_force_an_output_viewport() {
     let nb = Notebook { cells: vec![], extra: serde_json::Map::new(), header: None };
     let picker = Picker::from_fontsize(FontSize::new(8, 16));
     let r = Rendered::build(&nb, Some(picker), Default::default());
-    // a full-size plot: 18 reserved rows, above the 15-row text budget
+    // a full-size plot: 30 reserved rows, above the 15-row text budget
     let entry = r.image_entry(image::DynamicImage::new_rgba8(640, 480), false).unwrap();
     let rows = entry.rows as usize;
     let mut block = CellBlock {
@@ -932,4 +990,23 @@ fn marks_show_in_headers_and_a_sidebar() {
     let rows = buffer_rows(&terminal);
     assert!(!rows.join("").contains("Marks"));
     assert!(rows[0].contains("'b"));
+}
+
+#[test]
+fn log_rows_hang_under_the_message() {
+    let e = crate::log::Entry {
+        secs: 0.14,
+        level: log::Level::Info,
+        target: "jotter".into(),
+        msg: "one two three four five six seven eight nine ten".into(),
+    };
+    let text = |rows: Vec<Line>| rows.iter().map(Line::to_string).collect::<Vec<_>>();
+    // head is " 0.14s INFO  jotter " = 20 columns
+    let rows = text(log_rows(&e, 5, 50, false));
+    assert!(rows.len() > 1 && rows.iter().all(|r| r.trim_end().width() <= 50), "{rows:?}");
+    assert!(rows[0].starts_with(" 0.14s INFO  jotter one"));
+    assert!(rows[1..].iter().all(|r| r.starts_with(&" ".repeat(20)) && !r[20..].starts_with(' ')));
+    // unwrapped: one row; too narrow to hang: the whole line wraps
+    assert_eq!(text(log_rows(&e, 5, 50, true)).len(), 1);
+    assert!(text(log_rows(&e, 4, 30, false))[1].starts_with(|c: char| c != ' '));
 }

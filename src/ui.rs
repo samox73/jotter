@@ -40,7 +40,7 @@ const ERROR_STYLE: Style = Style::new().fg(Color::Red);
 /// stderr: told apart from stdout, quieter than a traceback.
 const STDERR_STYLE: Style = Style::new().fg(Color::Red).add_modifier(Modifier::DIM);
 
-/// Images taller than this many rows are downscaled once (config knob).
+/// Images taller than this many rows are downscaled (config knob; 0: no cap).
 fn max_image_rows() -> u16 {
     crate::config::get().max_image_rows
 }

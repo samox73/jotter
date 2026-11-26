@@ -11,9 +11,17 @@ pub struct Config {
     // These doc comments are the user documentation: `jotter --generate`
     // turns them into the docs site's configuration reference (markdown;
     // an empty `///` line starts a new paragraph).
-    /// Images taller than this many terminal rows are scaled down to fit, once, when the output is
-    /// first shown. Larger values show plots bigger but push the next cell further down.
+    /// Images taller than this many terminal rows are scaled down to fit. `0`, the default, means
+    /// no limit: an image is shown at its own size and only scaled down when it is wider than the
+    /// window. Set a limit to keep tall plots from pushing the next cell off the
+    /// screen. See [images and plots](/jotter/guides/outputs/#images).
     pub max_image_rows: u16,
+    /// How many screen pixels one pixel of an output image's size takes. `0`, the default, picks
+    /// it from your terminal's font size, so that a plot is as large next to the text as it is in
+    /// JupyterLab; on a HiDPI screen that enlarges plots, and matplotlib's `retina` format keeps
+    /// them sharp. Set `1` to show images pixel for pixel. See [images and
+    /// plots](/jotter/guides/outputs/#images).
+    pub image_scale: f32,
     /// Display math taller than this many terminal rows is scaled down to fit: `$$…$$` in
     /// markdown, latex cells, and LaTeX outputs such as SymPy's. Inline `$…$` math always takes
     /// one row. See [math](/jotter/guides/math/).
@@ -79,7 +87,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            max_image_rows: 18,
+            max_image_rows: 0,
+            image_scale: 0.0,
             max_math_rows: 4,
             max_output_rows: 15,
             autosave_secs: 30,
@@ -139,7 +148,7 @@ mod tests {
     fn partial_config_parses_and_unknown_keys_error() {
         let c: Config = toml::from_str("max_output_rows = 30").unwrap();
         assert_eq!(c.max_output_rows, 30);
-        assert_eq!(c.max_image_rows, 18); // default kept
+        assert_eq!(c.max_image_rows, 0); // default kept
         assert!(toml::from_str::<Config>("max_outpt_rows = 30").is_err()); // typo caught
     }
 }

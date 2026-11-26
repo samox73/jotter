@@ -49,7 +49,11 @@ PNG, JPEG, GIF and SVG outputs render inline. That covers matplotlib, seaborn, p
 
 Images use the terminal's graphics protocol, which jOtter requires. See [Terminal setup](/jotter/getting-started/terminal-setup/).
 
-Images taller than 18 rows ([`max_image_rows`](/jotter/reference/configuration/#max_image_rows)) are scaled down once, with high-quality resampling.
+An image is shown at its own size, scaled so that it is as large next to the text as in JupyterLab, and scaled down to the window's width when it is wider. On a HiDPI screen that enlarges a plain figure, which softens it; matplotlib's `retina` format takes the same space and stays sharp: run `%config InlineBackend.figure_format = 'retina'` in a notebook. Set [`image_scale`](/jotter/reference/configuration/#image_scale) to `1` to show images pixel for pixel. To keep tall images from pushing the next cell off the screen, set a height limit with [`max_image_rows`](/jotter/reference/configuration/#max_image_rows).
+
+<Aside type="caution" title="Changed in 0.8">
+Up to 0.7, images were shown pixel for pixel and scaled down to at most 18 rows. Now they follow JupyterLab's sizing and have no height limit, so plots are larger. For the old look, set `image_scale = 1` and `max_image_rows = 18` in your [configuration](/jotter/reference/configuration/).
+</Aside>
 
 ### Plots in your terminal's colours
 
@@ -86,11 +90,7 @@ jOtter asks the terminal for its colours at startup. Terminals that don't answer
 | Key | Does |
 | --- | --- |
 | <kbd>z</kbd><kbd>i</kbd> | Show the selected cell's image fullscreen (zoom image); any key returns |
-| <kbd>Z</kbd> | Toggle native size for the selected cell's images |
-
-<Aside type="caution">
-Images wider than the terminal are cropped at the right edge rather than scaled down. Make figures narrower (`plt.figure(figsize=(6, 3))`) or widen the terminal.
-</Aside>
+| <kbd>Z</kbd> | Toggle native size for the selected cell's images: every pixel, not fitted to the window |
 
 ## Math, markdown and other rich outputs
 

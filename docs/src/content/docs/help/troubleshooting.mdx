@@ -50,7 +50,7 @@ If jOtter is killed with `kill -9`, it can't restore the terminal. Run `reset`. 
 
 ## Images are cut off at the right
 
-Images wider than the terminal are cropped, not scaled. Make figures smaller, for example `plt.figure(figsize=(6, 3))`, or set `plt.rcParams["figure.dpi"]` lower.
+Images are scaled down to the window's width, except at native size: <kbd>Z</kbd> shows every pixel of the selected cell's images and crops what doesn't fit. Press <kbd>Z</kbd> again to fit them.
 
 ## Shift+Enter inserts a line instead of running
 

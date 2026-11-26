@@ -18,6 +18,10 @@ pub struct InlineImage {
     pub(super) rows: u16,
     /// Pixel size as transmitted (for the `D` report).
     pub(super) px: (u32, u32),
+    /// Its own pixel size, before fitting the body width and the row cap:
+    /// a width change refits from this. None: shown as is whatever the
+    /// width (native-size toggle).
+    pub(super) want: Option<(u32, u32)>,
     /// None in a layout pass: sized, never decoded or encoded.
     pub(super) proto: Option<SlicedProtocol>,
     pub(super) kitty: Option<KittyImage>,
@@ -185,7 +189,7 @@ pub struct CellBlock {
     /// budget. usize::MAX = follow the tail (streaming output stays live).
     pub out_scroll: usize,
     pub collapsed: bool,
-    /// Output images shown at native size instead of the height cap (`Z`).
+    /// Output images shown at their pixel size, unfitted (`Z`).
     pub full_images: bool,
     /// Wall time of the cell's last completed execution (session-only).
     pub elapsed: Option<std::time::Duration>,
