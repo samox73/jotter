@@ -160,12 +160,21 @@ async fn main() -> Result<()> {
     let (palette, enhanced) = recolor::query();
     recolor::init(palette.filter(|_| picker.is_some() && config::get().recolor_plots));
     // kitty keeps images across a crashed session: drop them all
-    if picker
+    if let Some(p) = picker
         .as_ref()
-        .is_some_and(|p| p.protocol_type() == ratatui_image::picker::ProtocolType::Kitty)
+        .filter(|p| p.protocol_type() == ratatui_image::picker::ProtocolType::Kitty)
     {
         use std::io::Write;
-        let _ = write!(std::io::stdout(), "\x1b_Ga=d,d=A\x1b\\");
+        // inside tmux, wrapped for passthrough like every other kitty
+        // command: unwrapped, tmux reads the APC as a title and shows
+        // "Ga=d,d=A" as the window name
+        let clear = "\x1b_Ga=d,d=A,q=2\x1b\\";
+        let clear = if p.tmux_detected() {
+            format!("\x1bPtmux;{}\x1b\\", clear.replace('\x1b', "\x1b\x1b"))
+        } else {
+            clear.to_string()
+        };
+        let _ = write!(std::io::stdout(), "{clear}");
         let _ = std::io::stdout().flush();
     }
     app.rendered.set_picker(picker);
