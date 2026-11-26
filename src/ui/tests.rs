@@ -290,6 +290,113 @@ fn images_never_force_an_output_viewport() {
 }
 
 #[test]
+fn a_language_without_a_grammar_uses_the_kernels_lexer_hint() {
+    let cell: Cell = serde_json::from_value(serde_json::json!({
+        "cell_type": "code", "metadata": {}, "source": "x := 1", "outputs": []
+    }))
+    .unwrap();
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "metadata".into(),
+        serde_json::json!({"language_info": {"name": "giac", "pygments_lexer": "matlab"}}),
+    );
+    let nb = Notebook { cells: vec![cell], extra, header: None };
+    let mut r = Rendered::build(&nb, None, Default::default());
+    assert_eq!(r.cell_lang(&nb.cells[0]), "matlab");
+    // and when the kernel reports it at run time
+    r.set_language_info(
+        &serde_json::json!({"name": "giac", "codemirror_mode": {"name": "matlab"}}),
+    );
+    assert_eq!(r.cell_lang(&nb.cells[0]), "matlab");
+    // hints no grammar knows: the name stays, highlighted as plain text
+    r.set_language_info(&serde_json::json!({"name": "giac", "pygments_lexer": "nosuchlexer"}));
+    assert_eq!(r.cell_lang(&nb.cells[0]), "giac");
+    // a known name wins over the hints
+    r.set_language_info(&serde_json::json!({"name": "r", "pygments_lexer": "matlab"}));
+    assert_eq!(r.cell_lang(&nb.cells[0]), "r");
+}
+
+const TOY_SYNTAX: &str = "%YAML 1.2\n---\nname: Toy\nfile_extensions: [toy]\nscope: source.toy\n\
+     contexts:\n  main:\n    - match: '\\bfoo\\b'\n      scope: keyword.toy\n";
+
+/// A fresh folder of grammars under the temp dir, removed on drop.
+struct GrammarDir(std::path::PathBuf);
+
+impl GrammarDir {
+    fn new(name: &str, files: &[(&str, &str)]) -> Self {
+        let dir = std::env::temp_dir().join(format!("jotter-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (file, text) in files {
+            std::fs::write(dir.join(file), text).unwrap();
+        }
+        Self(dir)
+    }
+}
+
+impl Drop for GrammarDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn grammars_in_the_user_syntaxes_folder_are_loaded() {
+    let dir = GrammarDir::new("syntaxes", &[("Toy.sublime-syntax", TOY_SYNTAX)]);
+    let s = Syntaxes::with_user_dir(Some(dir.0.clone()));
+    assert!(s.find("toy").is_some());
+    assert!(s.find("python").is_some(), "bundled grammars stay");
+    drop(dir);
+    // a missing folder is fine
+    let s = Syntaxes::with_user_dir(Some(std::env::temp_dir().join("jotter-no-such-dir")));
+    assert!(s.find("python").is_some());
+}
+
+#[test]
+fn a_grammar_that_fails_to_load_is_skipped_and_the_rest_load() {
+    // Broken sorts first, so a loader that stops at the first error would miss Toy
+    let dir = GrammarDir::new(
+        "bad-syntaxes",
+        &[("Broken.sublime-syntax", "not: [valid yaml"), ("Toy.sublime-syntax", TOY_SYNTAX)],
+    );
+    let s = Syntaxes::with_user_dir(Some(dir.0.clone()));
+    assert!(s.find("toy").is_some());
+    assert!(s.find("python").is_some());
+}
+
+/// User grammars live in a set of their own, so highlighting has to run
+/// against that set, not the bundled one.
+#[test]
+fn a_user_grammar_highlights_its_cells() {
+    let dir = GrammarDir::new("hl-syntaxes", &[("Toy.sublime-syntax", TOY_SYNTAX)]);
+    let nb = Notebook { cells: vec![], extra: Default::default(), header: None };
+    let mut r = Rendered::build(&nb, None, Default::default());
+    r.syntaxes = Syntaxes::with_user_dir(Some(dir.0.clone()));
+    let plain = r.highlight("foo bar", "txt");
+    let toy = r.highlight("foo bar", "toy");
+    let text = |l: &Vec<ratatui::text::Line>| {
+        l[0].spans.iter().map(|s| s.content.to_string()).collect::<String>()
+    };
+    assert_eq!(text(&toy), "foo bar");
+    assert_ne!(toy[0].spans.len(), plain[0].spans.len(), "foo is a keyword: {toy:?}");
+}
+
+/// A user grammar can't reach the bundled ones from its own set: one that
+/// embeds python still loads, and the embedded part is left plain.
+#[test]
+fn a_user_grammar_that_embeds_a_bundled_one_still_loads() {
+    let embeds = "%YAML 1.2\n---\nname: Wrap\nfile_extensions: [wrap]\nscope: source.wrap\n\
+         contexts:\n  main:\n    - match: '<<'\n      embed: scope:source.python\n      escape: '>>'\n";
+    let dir = GrammarDir::new("embed-syntaxes", &[("Wrap.sublime-syntax", embeds)]);
+    let nb = Notebook { cells: vec![], extra: Default::default(), header: None };
+    let mut r = Rendered::build(&nb, None, Default::default());
+    r.syntaxes = Syntaxes::with_user_dir(Some(dir.0.clone()));
+    assert!(r.syntaxes.find("wrap").is_some());
+    let lines = r.highlight("a << x = 1 >> b", "wrap");
+    let text: String = lines[0].spans.iter().map(|s| s.content.to_string()).collect();
+    assert_eq!(text, "a << x = 1 >> b");
+}
+
+#[test]
 fn julia_r_and_rust_cells_have_a_syntax_and_an_editor_suffix() {
     for (lang, ext) in [("julia", "jl"), ("r", "R"), ("rust", "rs")] {
         let cell: Cell = serde_json::from_value(serde_json::json!({
@@ -300,7 +407,7 @@ fn julia_r_and_rust_cells_have_a_syntax_and_an_editor_suffix() {
         extra.insert("metadata".into(), serde_json::json!({"kernelspec": {"language": lang}}));
         let nb = Notebook { cells: vec![cell], extra, header: None };
         let r = Rendered::build(&nb, None, Default::default());
-        assert!(r.ps.find_syntax_by_token(lang).is_some(), "{lang}");
+        assert!(r.syntaxes.find(lang).is_some(), "{lang}");
         assert_eq!(r.edit_suffix(&nb.cells[0]), ext, "{lang}");
     }
 }
