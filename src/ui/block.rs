@@ -205,6 +205,9 @@ pub struct CellBlock {
     pub(super) last_h: Option<usize>,
     /// Frame it was last near the screen (render window), for eviction.
     pub(super) seen: u64,
+    /// Holds Braille plots, drawn for the body width at render time: a new
+    /// width re-renders them (rewrapping would break their rows apart).
+    pub(super) braille: bool,
 }
 
 impl CellBlock {
@@ -225,6 +228,7 @@ impl CellBlock {
             laid_for: None,
             last_h: None,
             seen: 0,
+            braille: false,
         }
     }
 

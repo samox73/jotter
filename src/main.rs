@@ -1,4 +1,5 @@
 mod app;
+mod braille;
 mod config;
 mod editor;
 mod gendocs;
@@ -46,9 +47,13 @@ struct Args {
     /// Kernelspec name (default: the notebook's kernelspec, then python3)
     #[arg(long)]
     kernel: Option<String>,
-    /// Disable inline graphics (kitty/sixel)
+    /// Disable inline graphics (kitty/sixel) and Braille plots: text only
     #[arg(long)]
     no_images: bool,
+    /// Draw plots as Braille text instead of images, also in a terminal
+    /// without a graphics protocol
+    #[arg(long, conflicts_with = "no_images")]
+    braille: bool,
     /// Append a debug log (jotter + kernel wire) to this file
     #[arg(long)]
     log: Option<PathBuf>,
@@ -134,10 +139,10 @@ async fn main() -> Result<()> {
     // Two round trips before EventStream claims stdin, each ending at a
     // reply every terminal sends (DSR, DA1) so the timeouts only matter for
     // a terminal that answers nothing: the graphics protocol and cell size
-    // (jOtter doesn't start without one), then the colours for recolouring
+    // (jOtter doesn't start without one, unless --braille), then the colours for recolouring
     // plots together with the keyboard protocol (Shift+Enter, Ctrl+Enter as
     // distinct keys).
-    let picker = if args.no_images {
+    let picker = if args.no_images || args.braille {
         None
     } else {
         ratatui_image::picker::Picker::from_query_stdio_with_options(
@@ -149,13 +154,16 @@ async fn main() -> Result<()> {
         .ok()
         .filter(|p| p.protocol_type() != ratatui_image::picker::ProtocolType::Halfblocks)
     };
-    if picker.is_none() && !args.no_images {
+    if picker.is_none() && !args.no_images && !args.braille {
         let _ = ratatui::try_restore();
         anyhow::bail!(
             "this terminal has no graphics protocol (kitty graphics, sixel or iTerm2), which \
-             jOtter needs: use kitty, Ghostty, foot or WezTerm, or pass --no-images"
+             jOtter needs: use kitty, Ghostty, foot or WezTerm, or pass --braille (plots as \
+             Braille text) or --no-images"
         );
     }
+    // --braille: plots drawn as Braille text instead of images
+    app.rendered.set_braille(args.braille);
     app.spawn_kernel();
     let (palette, enhanced) = recolor::query();
     recolor::init(palette.filter(|_| picker.is_some() && config::get().recolor_plots));

@@ -5,7 +5,7 @@ description: "Which terminals jOtter supports, and the image and keyboard protoc
 
 import Still from '../../../components/Still.astro';
 
-jOtter needs a terminal with an image protocol: kitty graphics, sixel or the iTerm2 protocol. In a terminal without one it prints an error and doesn't start. What differs between the supported terminals is the protocol and whether modified keys like <kbd>Shift</kbd>+<kbd>Enter</kbd> work. [Terminal setup](/jotter/getting-started/terminal-setup/) explains both.
+jOtter needs a terminal with an image protocol: kitty graphics, sixel or the iTerm2 protocol. In a terminal without one it prints an error and doesn't start, unless plots are drawn as [Braille text](/jotter/guides/outputs/#braille-plots) with `--braille`. What differs between the supported terminals is the protocol and whether modified keys like <kbd>Shift</kbd>+<kbd>Enter</kbd> work. [Terminal setup](/jotter/getting-started/terminal-setup/) explains both.
 
 | Terminal | Images | <kbd>Shift</kbd>+<kbd>Enter</kbd> | Notes |
 | --- | --- | --- | --- |
@@ -41,6 +41,6 @@ These terminals have no image protocol jOtter can use, so it doesn't start in th
 - [GNOME Terminal](https://gitlab.gnome.org/GNOME/gnome-terminal) (VTE 0.84)
 - [Konsole](https://konsole.kde.org): it has sixel and part of the kitty protocol, but both are incomplete in ways jOtter's image library can't use.
 
-`jotter --no-images` still starts there, without plots and rendered math, but that combination isn't tested.
+`jotter --braille` starts there with plots drawn as Braille text and math as Unicode approximations; `jotter --no-images` starts without plots and rendered math. Neither combination is part of the tested set.
 
 Using a terminal not listed here? Please [report how it works](https://github.com/samox73/jotter/issues/new), with the `terminal:` line from a `--log` run, so this table can include it.
