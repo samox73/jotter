@@ -16,7 +16,7 @@ use serde_json::Value;
 use syntect::{
     easy::HighlightLines,
     highlighting::{Theme, ThemeSet},
-    parsing::{SyntaxDefinition, SyntaxSet},
+    parsing::{SyntaxDefinition, SyntaxReference, SyntaxSet, SyntaxSetBuilder},
     util::LinesWithEndings,
 };
 use unicode_width::UnicodeWidthChar;
@@ -37,7 +37,7 @@ const RENDER_BUDGET: usize = 64 << 20;
 pub(super) static RENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 pub struct Rendered {
-    pub(super) ps: SyntaxSet,
+    pub(super) syntaxes: Syntaxes,
     pub(super) theme: Theme,
     pub(super) picker: Option<Picker>,
     /// Notebook directory: markdown image paths resolve relative to it.
@@ -101,35 +101,62 @@ fn user_syntax_dir() -> Option<std::path::PathBuf> {
     crate::config::path().and_then(|p| Some(p.parent()?.join("syntaxes")))
 }
 
-/// syntect's own set plus bat's (Julia, TOML, TypeScript, ...), plus any
-/// grammars in the user's syntaxes folder.
-fn syntax_set() -> SyntaxSet {
-    syntax_set_with(user_syntax_dir())
+/// Code grammars: syntect's own set plus bat's (Julia, TOML, TypeScript, ...),
+/// and the user's from their syntaxes folder. Kept as two sets: adding to the
+/// prebuilt set would deserialize and re-link every bundled grammar at startup.
+pub(super) struct Syntaxes {
+    bundled: SyntaxSet,
+    user: Option<SyntaxSet>,
 }
 
-/// The bundled grammars plus every `.sublime-syntax` file under `dir`, in name
-/// order. A file that fails to read or parse is skipped with a warning; the
-/// rest still load.
-pub(super) fn syntax_set_with(dir: Option<std::path::PathBuf>) -> SyntaxSet {
-    let bundled = two_face::syntax::extra_newlines();
-    let Some(dir) = dir.filter(|d| d.is_dir()) else { return bundled };
+impl Syntaxes {
+    fn load() -> Self {
+        Self::with_user_dir(user_syntax_dir())
+    }
+
+    pub(super) fn with_user_dir(dir: Option<std::path::PathBuf>) -> Self {
+        Self { bundled: two_face::syntax::extra_newlines(), user: dir.and_then(user_set) }
+    }
+
+    /// The grammar for `token` (a name or an extension) and the set it belongs
+    /// to, which highlighting needs. A user grammar wins over a bundled one.
+    pub(super) fn find(&self, token: &str) -> Option<(&SyntaxReference, &SyntaxSet)> {
+        self.user
+            .iter()
+            .chain([&self.bundled])
+            .find_map(|set| Some((set.find_syntax_by_token(token)?, set)))
+    }
+
+    fn plain_text(&self) -> (&SyntaxReference, &SyntaxSet) {
+        (self.bundled.find_syntax_plain_text(), &self.bundled)
+    }
+}
+
+/// Every `.sublime-syntax` file under `dir`, in name order, as a set of its
+/// own. A file that fails to read or parse is skipped with a warning; the
+/// rest still load. None when there are none.
+fn user_set(dir: std::path::PathBuf) -> Option<SyntaxSet> {
+    if !dir.is_dir() {
+        return None;
+    }
     let mut files = Vec::new();
     syntax_files(&dir, &mut files);
-    if files.is_empty() {
-        return bundled;
-    }
-    let mut builder = bundled.into_builder();
+    let mut builder = SyntaxSetBuilder::new();
+    let mut any = false;
     for path in files {
         let loaded = std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| {
             let stem = path.file_stem().and_then(|x| x.to_str());
             SyntaxDefinition::load_from_str(&s, true, stem).map_err(|e| e.to_string())
         });
         match loaded {
-            Ok(syntax) => builder.add(syntax),
+            Ok(syntax) => {
+                builder.add(syntax);
+                any = true;
+            }
             Err(e) => log::warn!("skipping the grammar {}: {e}", path.display()),
         }
     }
-    builder.build()
+    any.then(|| builder.build())
 }
 
 /// The `.sublime-syntax` files under `dir`, subfolders included, sorted.
@@ -151,14 +178,14 @@ fn syntax_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
 
 impl Rendered {
     pub fn build(nb: &Notebook, picker: Option<Picker>, dir: std::path::PathBuf) -> Self {
-        let ps = syntax_set();
+        let syntaxes = Syntaxes::load();
         let mut themes = ThemeSet::load_defaults().themes;
         let theme = themes
             .remove(&crate::config::get().theme)
             .or_else(|| themes.remove("base16-ocean.dark"))
             .expect("bundled theme");
         let mut r = Self {
-            ps,
+            syntaxes,
             theme,
             picker,
             dir,
@@ -269,13 +296,10 @@ impl Rendered {
     /// Syntax token for code cells: the language if a grammar knows it, else
     /// the first lexer hint one knows.
     fn code_lang(&self) -> &str {
-        if self.ps.find_syntax_by_token(&self.lang).is_some() {
+        if self.syntaxes.find(&self.lang).is_some() {
             return &self.lang;
         }
-        self.lang_hints
-            .iter()
-            .find(|h| self.ps.find_syntax_by_token(h).is_some())
-            .map_or(&self.lang, |h| h)
+        self.lang_hints.iter().find(|h| self.syntaxes.find(h).is_some()).map_or(&self.lang, |h| h)
     }
 
     /// Highlighting token for a cell's source.
@@ -291,9 +315,9 @@ impl Rendered {
     /// $EDITOR picks the right filetype ("py", "R", "jl", ...).
     pub fn edit_suffix(&self, cell: &Cell) -> String {
         let token = self.cell_lang(cell);
-        self.ps
-            .find_syntax_by_token(token)
-            .and_then(|s| s.file_extensions.first().cloned())
+        self.syntaxes
+            .find(token)
+            .and_then(|(s, _)| s.file_extensions.first().cloned())
             .unwrap_or_else(|| match cell.cell_type.as_str() {
                 "code" => token.to_string(),
                 _ => "txt".into(),
@@ -363,15 +387,17 @@ impl Rendered {
     /// Syntax-highlight source text (used for cached blocks and the live editor).
     /// `lang` may be a name ("rust", "python") or an extension ("rs", "py").
     pub fn highlight(&self, source: &str, lang: &str) -> Vec<Line<'static>> {
-        let syntax =
-            self.ps.find_syntax_by_token(lang).unwrap_or_else(|| self.ps.find_syntax_plain_text());
+        let (syntax, set) = self.syntaxes.find(lang).unwrap_or_else(|| self.syntaxes.plain_text());
         let mut hl = HighlightLines::new(syntax, &self.theme);
         let theme_bg = self.theme.settings.background;
         LinesWithEndings::from(source)
             .map(|line| {
-                let spans = hl
-                    .highlight_line(line, &self.ps)
-                    .unwrap_or_default()
+                // a grammar error (a user grammar embedding one its set lacks)
+                // leaves the line plain rather than blank
+                let Ok(tokens) = hl.highlight_line(line, set) else {
+                    return Line::from(show_tabs(line.trim_end_matches('\n'), Style::default()));
+                };
+                let spans = tokens
                     .into_iter()
                     .flat_map(|(st, txt)| {
                         let (fg, bg) = (st.foreground, st.background);

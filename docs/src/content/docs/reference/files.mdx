@@ -21,7 +21,7 @@ The kernel's own files, such as its connection file, are handled by the Jupyter 
 
 Code cells are highlighted with the grammar for the notebook's language (`language_info.name`, else `kernelspec.language`). When no grammar knows that name, jOtter tries the kernel's hints: `language_info.pygments_lexer`, then `codemirror_mode`. A kernel for a language without a grammar can name a close one there.
 
-To add a grammar, put its `.sublime-syntax` file in `~/.config/jotter/syntaxes/`. It is read at startup alongside the bundled ones; a file that fails to load is skipped with a warning in the log.
+To add a grammar, put its `.sublime-syntax` file in `~/.config/jotter/syntaxes/`. It is read at startup alongside the bundled ones; a file that fails to load is skipped with a warning in the log. User grammars are loaded as a set of their own, so one that embeds or includes another language's grammar (`scope:source.python`) can't reach the bundled ones; that part is left uncoloured.
 
 ## Kernelspecs
 
