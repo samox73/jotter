@@ -20,7 +20,7 @@ First release.
 ### {{ group | striptags | trim | upper_first }}
 
 {% for commit in commits %}\
-- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | split(pat="\n") | first | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/samox73/jotter/commit/{{ commit.id }}))
+- {% if commit.breaking %}**Breaking:** {% endif %}{% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | split(pat="\n") | first | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/samox73/jotter/commit/{{ commit.id }}))
 {% endfor %}\
 {% endfor %}
 """
