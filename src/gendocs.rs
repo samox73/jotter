@@ -28,7 +28,8 @@ pub fn generate(mut cmd: clap::Command, dir: &Path) -> Result<()> {
             cmd.get_arguments()
                 .filter(|a| !a.is_hide_set() && !matches!(a.get_id().as_str(), "help" | "version"))
                 .cloned(),
-        );
+        )
+        .subcommands(cmd.get_subcommands().filter(|c| c.get_name() != "help").cloned());
     for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
         clap_complete::generate_to(shell, &mut cmd, "jotter", &completions)?;
     }
@@ -140,6 +141,10 @@ fn cli(cmd: &mut clap::Command) -> String {
         };
         let help = arg.get_help().map(|h| h.to_string()).unwrap_or_default();
         let _ = writeln!(s, "| {name} | {help} |");
+    }
+    for sub in cmd.get_subcommands().filter(|c| c.get_name() != "help") {
+        let help = sub.get_about().map(|h| h.to_string()).unwrap_or_default();
+        let _ = writeln!(s, "| `{}` | {help} |", sub.get_name());
     }
     s
 }

@@ -9,7 +9,7 @@ jOtter follows the [XDG base directory](https://specifications.freedesktop.org/b
 
 | What | Path | Notes |
 | --- | --- | --- |
-| Configuration | `$XDG_CONFIG_HOME/jotter/config.toml`, default `~/.config/jotter/config.toml` | Optional. See [Configuration](/jotter/reference/configuration/). |
+| Configuration | `$XDG_CONFIG_HOME/jotter/config.toml`, default `~/.config/jotter/config.toml` | Optional; `jotter config` opens it in your editor. See [Configuration](/jotter/reference/configuration/). |
 | Autosaves | `$XDG_STATE_HOME/jotter/autosave/`, default `~/.local/state/jotter/autosave/` | One file per notebook, named after its absolute path with `/` replaced by `%`. Removed when you save. |
 | Debug log | wherever `--log` points | Only written with `--log`; appended to, never truncated. |
 | External-editor file | `$TMPDIR/jotter-cell-<pid>.<ext>`, default `/tmp` | Exists only while <kbd>Ctrl</kbd>+<kbd>g</kbd> is open. |

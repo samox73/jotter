@@ -13,7 +13,7 @@ mod ui;
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use app::{Action, App};
 use clap::{CommandFactory, Parser};
 use crossterm::{
@@ -36,8 +36,10 @@ use tokio::sync::mpsc;
 ///
 /// Documentation: https://samox73.github.io/jotter/
 #[derive(Parser)]
-#[command(name = "jotter", version)]
+#[command(name = "jotter", version, args_conflicts_with_subcommands = true)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Subcommand>,
     /// Notebook to open: .ipynb, or .py in jupytext's percent format / a plain
     /// script (outputs stay in memory). None: a scratchpad; `:w name` saves it
     notebook: Option<PathBuf>,
@@ -53,6 +55,12 @@ struct Args {
     /// Write docs reference pages, man page and completions into DIR
     #[arg(long, hide = true, value_name = "DIR")]
     generate: Option<PathBuf>,
+}
+
+#[derive(clap::Subcommand)]
+enum Subcommand {
+    /// Open the config file in $VISUAL/$EDITOR (a notebook of that name: `./config`)
+    Config,
 }
 
 /// Copy `text` to the system clipboard via OSC 52 (works over ssh/tmux).
@@ -105,6 +113,9 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     if let Some(dir) = args.generate {
         return gendocs::generate(Args::command(), &dir);
+    }
+    if let Some(Subcommand::Config) = args.command {
+        return edit_config();
     }
     let notebook = args.notebook.unwrap_or_default(); // empty: scratchpad
     let config_warning = config::init();
@@ -335,6 +346,26 @@ fn editor_command(editor: &str, file: &std::path::Path) -> std::process::Command
     c
 }
 
+fn editor_from_env() -> String {
+    std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "vi".into())
+}
+
+/// `jotter config`: open the config file in $VISUAL/$EDITOR, then say what is
+/// wrong with it, if anything.
+fn edit_config() -> Result<()> {
+    let path = config::path().context("no $HOME or $XDG_CONFIG_HOME to keep a config in")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    let editor = editor_from_env();
+    let status = editor_command(&editor, &path).status().with_context(|| editor.clone())?;
+    anyhow::ensure!(status.success(), "{editor} exited with {status}");
+    if let Some(warning) = config::init() {
+        anyhow::bail!(warning);
+    }
+    Ok(())
+}
+
 /// Suspend the TUI, open the selected cell in $VISUAL/$EDITOR, read it back.
 fn external_edit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, enhanced: bool) {
     let Some(cell) = app.notebook.cells.get(app.selected) else {
@@ -342,9 +373,7 @@ fn external_edit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, enhance
     };
     let suffix = app.rendered.edit_suffix(cell);
     let tmp = std::env::temp_dir().join(format!("jotter-cell-{}.{suffix}", std::process::id()));
-    let editor_cmd = std::env::var("VISUAL")
-        .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".into());
+    let editor_cmd = editor_from_env();
 
     let result = std::fs::write(&tmp, &cell.source).and_then(|()| {
         leave_extras(enhanced);
